@@ -61,12 +61,36 @@ st.sidebar.divider()
 
 if menu == "👥 Empleados":
     st.header("👥 Gestión de Operarios")
-    # ... (Código de empleados)
+    # Lógica de empleados (registro y tabla)
     st.table(df_emp)
 
 elif menu == "📝 Nueva OT":
     st.header("📝 Apertura de Orden de Trabajo")
-    # ... (Código de Nueva OT)
+    if df_emp.empty:
+        st.warning("Registre operarios primero.")
+    else:
+        with st.form("f_ot", clear_on_submit=True):
+            op = st.selectbox("Operario Asignado", df_emp['Nombre'])
+            tp = st.radio("Tipo de Trabajo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
+            ds = st.text_area("Descripción del Hallazgo")
+            archivo_foto = st.file_uploader("Capturar Foto (Opcional)", type=["jpg", "png", "jpeg"])
+            cp = st.text_input("Correo de copia")
+            if st.form_submit_button("Generar Orden"):
+                if ds and cp:
+                    id_ot = f"{len(df_ot) + 1:04d}"
+                    nombre_foto = "Sin foto"
+                    if archivo_foto:
+                        nombre_foto = f"OT_{id_ot}.jpg"
+                        with open(os.path.join("fotos", nombre_foto), "wb") as f:
+                            f.write(archivo_foto.getbuffer())
+                    
+                    nueva = {"OT": id_ot, "Empleado": op, "Descripcion": ds, 
+                             "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
+                             "Tipo": tp, "Estado": "Abierta", "Fin": "", "Comentarios": "", 
+                             "CorreoCopia": cp, "TiempoAcumulado": "0", "Foto": nombre_foto}
+                    df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
+                    guardar_datos(df_ot, "ordenes.csv")
+                    st.success(f"OT #{id_ot} guardada con éxito."); st.rerun()
 
 elif menu == "🔍 Cierre y Consulta":
     st.markdown(f'<div class="reloj-discreto">Hora CR: {obtener_fecha_cr().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
@@ -79,7 +103,7 @@ elif menu == "🔍 Cierre y Consulta":
         if pendientes.empty:
             st.info("No hay órdenes pendientes de cierre.")
         else:
-            # Resumen con Duración y Comentarios
+            # Cálculo de duración en tiempo real para la tabla
             ahora = obtener_fecha_cr()
             def calcular_horas(row):
                 try:
@@ -100,17 +124,24 @@ elif menu == "🔍 Cierre y Consulta":
             
             st.divider()
             
-            # Selector de Orden
-            opciones = ["--- Seleccione una orden ---"] + (pendientes['OT'] + " | " + pendientes['Empleado']).tolist()
+            # Selector de Orden con opción de limpieza
+            opciones = ["--- Seleccione una orden ---"] + (pendientes['OT'] + " | " + pendientes['Empleado'] + " | " + pendientes['Descripcion'].str[:30]).tolist()
             sel = st.selectbox("Escoger OT para editar:", opciones)
 
             if sel != "--- Seleccione una orden ---":
                 id_sel = sel.split(" | ")[0]
                 idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
 
+                # --- MOSTRAR FOTO (REINTEGRADO) ---
+                foto_nom = str(df_ot.at[idx, 'Foto'])
+                if foto_nom != "Sin foto" and foto_nom != "":
+                    ruta = os.path.join("fotos", foto_nom)
+                    if os.path.exists(ruta):
+                        st.image(ruta, caption=f"Evidencia de Apertura - OT #{id_sel}", width=400)
+
                 with st.form("form_cierre", clear_on_submit=True):
                     st.write(f"### Gestionando OT #{id_sel}")
-                    nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], 
+                    nuevo_est = st.selectbox("Cambiar Estado", ["Abierta", "En Pausa", "Cerrada"], 
                                              index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
                     coment = st.text_area("Comentarios de avance/finales", value=df_ot.at[idx, 'Comentarios'])
                     
@@ -120,21 +151,4 @@ elif menu == "🔍 Cierre y Consulta":
                         # Guardar tiempo acumulado si estaba abierta
                         if df_ot.at[idx, 'Estado'] == "Abierta":
                             inicio_dt = datetime.strptime(df_ot.at[idx, 'Inicio'], "%Y-%m-%d %H:%M:%S")
-                            df_ot.at[idx, 'TiempoAcumulado'] = str(float(df_ot.at[idx, 'TiempoAcumulado']) + (ahora_cierre - inicio_dt).total_seconds())
-                        
-                        if nuevo_est == "Abierta": df_ot.at[idx, 'Inicio'] = ahora_cierre.strftime("%Y-%m-%d %H:%M:%S")
-                        elif nuevo_est == "Cerrada": df_ot.at[idx, 'Fin'] = ahora_cierre.strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        df_ot.at[idx, 'Estado'] = nuevo_est
-                        df_ot.at[idx, 'Comentarios'] = coment
-                        guardar_datos(df_ot, "ordenes.csv")
-                        
-                        st.success("✅ Registro actualizado correctamente")
-                        st.rerun() # Esto limpia el selector y refresca la tabla
-
-    with tab2:
-        st.dataframe(df_ot, use_container_width=True)
-
-elif menu == "📊 Dashboard":
-    st.header("📊 Dashboard")
-    # ... (Tu código de Dashboard filtrado)
+                            df_ot.at[idx, 'TiempoAcumulado'] = str(float(df_ot.at[idx, '
