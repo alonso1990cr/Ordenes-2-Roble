@@ -78,7 +78,7 @@ cols_ot = ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "
 df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
 df_ot = cargar_datos("ordenes.csv", cols_ot)
 
-# --- MENÚ (LÍNEA 82 CORREGIDA) ---
+# --- MENÚ ---
 menu = st.sidebar.selectbox("MENÚ PRINCIPAL", ["👥 Empleados", "📝 Nueva OT", "🔍 Cierre y Consulta", "📊 Dashboard"])
 
 # 1. GESTIÓN DE EMPLEADOS
@@ -109,14 +109,12 @@ if menu == "👥 Empleados":
                     df_emp.at[idx_emp, 'Nombre'] = nuevo_nombre
                     df_emp.at[idx_emp, 'Correo'] = nuevo_correo
                     guardar_datos(df_emp, "empleados.csv")
-                    st.success("Actualizado")
                     st.rerun()
                 confirmar = st.checkbox("Confirmar eliminación")
                 if c2.form_submit_button("🗑️ Eliminar"):
                     if confirmar:
                         df_emp = df_emp.drop(idx_emp).reset_index(drop=True)
                         guardar_datos(df_emp, "empleados.csv")
-                        st.warning("Eliminado")
                         st.rerun()
     st.divider()
     st.table(df_emp)
@@ -143,12 +141,13 @@ elif menu == "📝 Nueva OT":
                     st.success(f"OT #{id_ot} creada.")
                     st.rerun()
 
-# 3. CIERRE Y CONSULTA
+# 3. CIERRE Y CONSULTA (CON DESCARGA DE EXCEL)
 elif menu == "🔍 Cierre y Consulta":
     st.markdown(f'<div class="reloj-discreto">Hora CR: {obtener_fecha_cr().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
     st.header("🔍 Gestión de Cierre y Consulta")
     
-    tab1, tab2 = st.tabs(["Órdenes Activas", "Historial de Cerradas"])
+    tab1, tab2 = st.tabs(["Órdenes Activas", "Historial Completo"])
+    
     with tab1:
         pendientes = df_ot[df_ot['Estado'].isin(["Abierta", "En Pausa"])].copy()
         if pendientes.empty: 
@@ -164,6 +163,7 @@ elif menu == "🔍 Cierre y Consulta":
                 except: return "0:00:00"
             pendientes['Duración'] = pendientes.apply(calc_viva, axis=1)
             st.dataframe(pendientes[["OT", "Estado", "Empleado", "Duración", "Tipo", "Descripcion", "Comentarios"]], use_container_width=True)
+            
             sel = st.selectbox("Gestionar OT:", pendientes['OT'] + " - " + pendientes['Descripcion'])
             idx = df_ot.index[df_ot['OT'] == sel.split(" - ")[0]].tolist()[0]
             with st.form("m_ot"):
@@ -180,11 +180,27 @@ elif menu == "🔍 Cierre y Consulta":
                     df_ot.at[idx, 'Comentarios'] = com
                     guardar_datos(df_ot, "ordenes.csv")
                     st.rerun()
+
     with tab2:
-        cerradas = df_ot[df_ot['Estado'] == "Cerrada"].copy()
-        if not cerradas.empty:
-            cerradas['Duración Final'] = cerradas.apply(lambda r: str(timedelta(seconds=int(float(r['TiempoAcumulado'])))), axis=1)
-            st.dataframe(cerradas[["OT", "Empleado", "Tipo", "Duración Final", "Fin", "Comentarios"]], use_container_width=True)
+        st.subheader("Historial de Órdenes")
+        if df_ot.empty:
+            st.info("No hay datos registrados.")
+        else:
+            # Mostrar tabla histórica
+            df_hist = df_ot.copy()
+            st.dataframe(df_hist, use_container_width=True)
+            
+            # --- FUNCIÓN DE DESCARGA EXCEL ---
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df_hist.to_excel(writer, index=False, sheet_name='Base_de_Datos_OT')
+            
+            st.download_button(
+                label="📥 Descargar Base de Datos Completa (Excel)",
+                data=buffer.getvalue(),
+                file_name=f"BD_Ordenes_{obtener_fecha_cr().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # 4. DASHBOARD
 elif menu == "📊 Dashboard":
@@ -208,7 +224,3 @@ elif menu == "📊 Dashboard":
         c1.metric("OTs", len(df_f)); c2.metric("Horas", f"{df_f['Horas'].sum():.2f}"); c3.metric("Promedio", f"{df_f['Horas'].mean():.2f}" if not df_f.empty else "0")
         if not df_f.empty:
             st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo', title="Inversión de Tiempo"), use_container_width=True)
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df_f.drop(columns=['Inicio_DT']).to_excel(writer, index=False, sheet_name='Reporte')
-            st.download_button("📥 Descargar Reporte Excel", buffer.getvalue(), "reporte_roble.xlsx")
