@@ -1,170 +1,203 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
 
-# --- CONFIGURACIÓN Y CONSTANTES ---
-# Datos obtenidos de configuraciones previas
-TIMEZONE_ADJUST = timedelta(hours=6) # Ajuste para Costa Rica (UTC-6)
-DESTINATARIOS_FIJOS = ["ronald.badilla@gruporoble.com", "mario.robleto@gruporoble.com"]
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Sistema Roble - Gestión OT", layout="wide")
 
-# --- FUNCIONES DE CÁLCULO DE TIEMPO ---
+# --- PARÁMETROS CONSTANTES ---
+UTC_OFFSET = 6  # Costa Rica es UTC-6
+CORREO_COPIA = "sa.alterna@gmail.com"
+
+# --- FUNCIONES DE APOYO ---
+
 def obtener_fecha_cr():
-    return datetime.utcnow() - TIMEZONE_ADJUST
+    """Retorna la fecha/hora actual ajustada a Costa Rica"""
+    return datetime.utcnow() - timedelta(hours=UTC_OFFSET)
+
+def enviar_correo(destinatario_emp, asunto, cuerpo):
+    """Envía correo usando los Secrets de Streamlit"""
+    try:
+        user = st.secrets["emails"]["sender_user"]
+        password = st.secrets["emails"]["sender_password"]
+        
+        msg = MIMEMultipart()
+        msg['From'] = user
+        msg['To'] = f"{destinatario_emp}, {CORREO_COPIA}"
+        msg['Subject'] = asunto
+        msg.attach(MIMEText(cuerpo, 'plain'))
+        
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(user, password)
+        server.sendmail(user, [destinatario_emp, CORREO_COPIA], msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Error al enviar correo: {e}")
+        return False
 
 def calcular_duracion_laboral(inicio, fin):
-    """Calcula duración ignorando horas fuera de jornada y almuerzo (12md-1pm)"""
-    duracion_total = timedelta(0)
-    current = inicio
-    
-    while current < fin:
-        # Definir jornada del día actual
-        if current.weekday() < 5: # Lunes a Viernes
-            start_work = current.replace(hour=8, minute=0, second=0)
-            end_work = current.replace(hour=17, minute=0, second=0)
-            almuerzo_inicio = current.replace(hour=12, minute=0, second=0)
-            almuerzo_fin = current.replace(hour=13, minute=0, second=0)
-        elif current.weekday() == 5: # Sábado
-            start_work = current.replace(hour=7, minute=0, second=0)
-            end_work = current.replace(hour=12, minute=0, second=0)
-            almuerzo_inicio = almuerzo_fin = end_work
+    """Calcula horas laboradas: L-V (8am-5pm), S (7am-12md). Resta 1h de almuerzo L-V."""
+    total_segundos = 0
+    curr = inicio
+    while curr < fin:
+        # Horarios según día
+        if curr.weekday() < 5: # Lunes a Viernes
+            h_inicio, h_fin = 8, 17
+            tiene_almuerzo = True
+        elif curr.weekday() == 5: # Sábado
+            h_inicio, h_fin = 7, 12
+            tiene_almuerzo = False
         else: # Domingo
-            current = (current + timedelta(days=1)).replace(hour=8, minute=0)
+            curr = (curr + timedelta(days=1)).replace(hour=8, minute=0)
             continue
-
-        # Ajustar ventana de trabajo efectiva
-        work_period_start = max(current, start_work)
-        work_period_end = min(fin, end_work)
-
-        if work_period_start < work_period_end:
-            # Restar almuerzo si el periodo lo cruza
-            total_segundos = (work_period_end - work_period_start).total_seconds()
-            if work_period_start < almuerzo_inicio and work_period_end > almuerzo_fin:
-                total_segundos -= 3600
+        
+        trabajo_inicio = curr.replace(hour=h_inicio, minute=0, second=0)
+        trabajo_fin = curr.replace(hour=h_fin, minute=0, second=0)
+        
+        entrada = max(curr, trabajo_inicio)
+        salida = min(fin, trabajo_fin)
+        
+        if entrada < salida:
+            segundos_dia = (salida - entrada).total_seconds()
+            # Restar almuerzo (12md-1pm) si el periodo lo cubre
+            if tiene_almuerzo and entrada.hour < 12 and salida.hour >= 13:
+                segundos_dia -= 3600
+            total_segundos += max(0, segundos_dia)
             
-            duracion_total += timedelta(seconds=max(0, total_segundos))
-            
-        # Avanzar al siguiente día
-        current = (current + timedelta(days=1)).replace(hour=8, minute=0)
+        curr = (curr + timedelta(days=1)).replace(hour=h_inicio, minute=0)
     
-    return duracion_total
+    return timedelta(seconds=total_segundos)
 
-def obtener_emoji_duracion(horas):
-    if horas < 2: return "⚡ (Rápido)"
-    if horas < 8: return "⏳ (Normal)"
-    return "🐢 (Extenso)"
-
-# --- PERSISTENCIA DE DATOS (CSV) ---
 def cargar_datos(archivo, columnas):
     if os.path.exists(archivo):
         return pd.read_csv(archivo)
     return pd.DataFrame(columns=columnas)
 
-# --- INTERFAZ ---
-st.set_page_config(page_title="Sistema Gestión Roble", layout="wide")
+# --- LÓGICA DE LA APP ---
 
-menu = st.sidebar.selectbox("Menú", ["Empleados", "Órdenes de Trabajo", "Cierre de Órdenes"])
+st.title("🏗️ Gestión de Órdenes de Trabajo - Grupo Roble")
 
-# 1. REGISTRO DE EMPLEADOS
+menu = st.sidebar.selectbox("Seleccione una opción", ["Empleados", "Crear Orden de Trabajo", "Cierre y Consulta"])
+
+# 1. GESTIÓN DE EMPLEADOS
 if menu == "Empleados":
-    st.header("👥 Gestión de Empleados")
+    st.header("👥 Registro de Empleados")
     df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
     
-    with st.expander("Añadir / Modificar Empleado"):
-        nombre = st.text_input("Nombre Completo")
-        correo = st.text_input("Correo Electrónico")
-        if st.button("Guardar Empleado"):
-            if nombre in df_emp['Nombre'].values:
-                df_emp.loc[df_emp['Nombre'] == nombre, 'Correo'] = correo
-            else:
-                new_row = pd.DataFrame({"Nombre": [nombre], "Correo": [correo]})
-                df_emp = pd.concat([df_emp, new_row], ignore_index=True)
-            df_emp.to_csv("empleados.csv", index=False)
-            st.success("Empleado guardado.")
+    with st.expander("Añadir / Editar Empleado"):
+        nom = st.text_input("Nombre Completo")
+        ema = st.text_input("Correo electrónico")
+        if st.button("Guardar Datos"):
+            if nom and ema:
+                df_emp = df_emp[df_emp['Nombre'] != nom] # Eliminar si ya existe para actualizar
+                nuevo = pd.DataFrame([{"Nombre": nom, "Correo": ema}])
+                df_emp = pd.concat([df_emp, nuevo], ignore_index=True)
+                df_emp.to_csv("empleados.csv", index=False)
+                st.success("Guardado correctamente.")
+                st.rerun()
 
-    st.table(df_emp)
+    st.subheader("Lista de Personal")
+    st.dataframe(df_emp, use_container_width=True)
     
     if not df_emp.empty:
-        eliminar = st.selectbox("Eliminar empleado", df_emp['Nombre'])
-        if st.button("Eliminar"):
-            df_emp = df_emp[df_emp['Nombre'] != eliminar]
+        borrar = st.selectbox("Seleccione para eliminar", df_emp['Nombre'])
+        if st.button("Eliminar Empleado"):
+            df_emp = df_emp[df_emp['Nombre'] != borrar]
             df_emp.to_csv("empleados.csv", index=False)
             st.rerun()
 
-# 2. ÓRDENES DE TRABAJO
-elif menu == "Órdenes de Trabajo":
-    st.header("📋 Nueva Orden de Trabajo")
+# 2. CREAR ORDEN DE TRABAJO
+elif menu == "Crear Orden de Trabajo":
+    st.header("📝 Nueva Orden de Trabajo")
     df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
     df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
 
     if df_emp.empty:
-        st.warning("Registre empleados primero.")
+        st.warning("Debe registrar empleados primero.")
     else:
-        with st.form("nueva_ot"):
-            empleado = st.selectbox("Asignar a", df_emp['Nombre'])
-            desc = st.text_area("Descripción del trabajo")
-            tipo = st.radio("Tipo", ["Preventivo", "Correctivo"])
+        with st.form("form_ot"):
+            emp_sel = st.selectbox("Asignar a:", df_emp['Nombre'])
+            tipo_ot = st.radio("Tipo de mantenimiento:", ["Preventivo", "Correctivo"])
+            desc_ot = st.text_area("Descripción detallada")
             
-            if st.form_submit_button("Generar Orden"):
-                # Generación automática de consecutivo
-                ahora = obtener_fecha_cr()
-                num_ot = ahora.strftime("%m%d-%H%M") 
+            if st.form_submit_button("Generar y Enviar"):
+                fecha_inicio = obtener_fecha_cr()
+                num_ot = fecha_inicio.strftime("%Y%m%d-%H%M")
                 
-                nueva_fila = {
-                    "OT": num_ot, "Empleado": empleado, "Descripcion": desc,
-                    "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), 
-                    "Tipo": tipo, "Estado": "Abierta", "Fin": "", "Comentarios": ""
+                # Guardar en CSV
+                nueva_ot = {
+                    "OT": num_ot, "Empleado": emp_sel, "Descripcion": desc_ot,
+                    "Inicio": fecha_inicio.strftime("%Y-%m-%d %H:%M:%S"),
+                    "Tipo": tipo_ot, "Estado": "Abierta", "Fin": "", "Comentarios": ""
                 }
-                df_ot = pd.concat([df_ot, pd.DataFrame([nueva_fila])], ignore_index=True)
+                df_ot = pd.concat([df_ot, pd.DataFrame([nueva_ot])], ignore_index=True)
                 df_ot.to_csv("ordenes.csv", index=False)
                 
-                # Simulación de envío de correo
-                email_emp = df_emp[df_emp['Nombre'] == empleado]['Correo'].values[0]
-                st.success(f"OT #{num_ot} creada. Correos enviados a: {email_emp} y supervisores.")
+                # Enviar correo
+                correo_destino = df_emp[df_emp['Nombre'] == emp_sel]['Correo'].values[0]
+                cuerpo = f"Nueva OT #{num_ot}\nEmpleado: {emp_sel}\nTipo: {tipo_ot}\nDescripción: {desc_ot}"
+                enviar_correo(correo_destino, f"Aviso: Nueva OT {num_ot}", cuerpo)
+                st.success(f"Orden #{num_ot} creada con éxito.")
 
 # 3. CIERRE Y CONSULTA
-elif menu == "Cierre de Órdenes":
-    st.header("✅ Consulta y Cierre")
-    df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
-    df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
+elif menu == "Cierre y Consulta":
+    st.header("🔍 Consulta y Cierre de Órdenes")
+    df_ot = cargar_datos("ordenes.csv", [])
+    df_emp = cargar_datos("empleados.csv", [])
     
-    persona = st.selectbox("Consultar Trabajador", df_emp['Nombre'] if not df_emp.empty else [])
-    
-    if persona:
-        ultimas_3 = df_ot[df_ot['Empleado'] == persona].tail(3)
+    if not df_ot.empty:
+        persona = st.selectbox("Consultar historial de:", df_emp['Nombre'].unique())
+        historial = df_ot[df_ot['Empleado'] == persona].tail(3)
         st.write("Últimas 3 órdenes:")
-        st.dataframe(ultimas_3)
+        st.table(historial)
         
-        ot_id = st.selectbox("Seleccione OT para cerrar", ultimas_3[ultimas_3['Estado'] == "Abierta"]['OT'])
-        comentarios = st.text_area("Comentarios de cierre")
-        
-        if st.button("Cerrar Orden Seleccionada"):
-            fin_dt = obtener_fecha_cr()
-            inicio_str = df_ot.loc[df_ot['OT'] == ot_id, 'Inicio'].values[0]
-            inicio_dt = datetime.strptime(inicio_str, "%Y-%m-%d %H:%M:%S")
+        # Selección para cerrar
+        ots_abiertas = historial[historial['Estado'] == "Abierta"]['OT'].tolist()
+        if ots_abiertas:
+            ot_a_cerrar = st.selectbox("Seleccione OT para CERRAR", ots_abiertas)
+            coment = st.text_area("Comentarios de cierre")
             
-            duracion = calcular_duracion_laboral(inicio_dt, fin_dt)
-            horas_decimal = duracion.total_seconds() / 3600
-            
-            df_ot.loc[df_ot['OT'] == ot_id, ['Estado', 'Fin', 'Comentarios']] = ["Cerrada", fin_dt.strftime("%Y-%m-%d %H:%M:%S"), comentarios]
-            df_ot.to_csv("ordenes.csv", index=False)
-            
-            st.balloons()
-            st.info(f"Orden cerrada. Duración laboral: {duracion} {obtener_emoji_duracion(horas_decimal)}")
+            if st.button("Finalizar Orden"):
+                fecha_fin = obtener_fecha_cr()
+                # Buscar inicio
+                ini_str = df_ot.loc[df_ot['OT'] == ot_a_cerrar, 'Inicio'].values[0]
+                ini_dt = datetime.strptime(ini_str, "%Y-%m-%d %H:%M:%S")
+                
+                duracion = calcular_duracion_laboral(ini_dt, fecha_fin)
+                
+                # Actualizar CSV
+                df_ot.loc[df_ot['OT'] == ot_a_cerrar, ['Estado', 'Fin', 'Comentarios']] = ["Cerrada", fecha_fin.strftime("%Y-%m-%d %H:%M:%S"), coment]
+                df_ot.to_csv("ordenes.csv", index=False)
+                
+                # Enviar correo de cierre
+                correo_destino = df_emp[df_emp['Nombre'] == persona]['Correo'].values[0]
+                cuerpo_fin = f"OT #{ot_a_cerrar} CERRADA\nDuración: {duracion}\nComentarios: {coment}"
+                enviar_correo(correo_destino, f"Cierre de OT {ot_a_cerrar}", cuerpo_fin)
+                st.info(f"Orden cerrada. Tiempo laborado: {duracion}")
+                st.rerun()
+        else:
+            st.info("No hay órdenes abiertas para este empleado entre las últimas 3.")
 
-# TABLA GENERAL DE SEGUIMIENTO
+# TABLA GENERAL CON EMOJIS
 st.divider()
-st.subheader("📊 Historial General")
-df_final = cargar_datos("ordenes.csv", [])
-if not df_final.empty:
-    # Formatear duración para la tabla
-    def aplicar_formato(row):
+st.subheader("📋 Resumen General de Actividades")
+df_vista = cargar_datos("ordenes.csv", [])
+if not df_vista.empty:
+    def format_row(row):
         if row['Estado'] == "Cerrada":
-            inicio = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
+            ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
             fin = datetime.strptime(row['Fin'], "%Y-%m-%d %H:%M:%S")
-            d = calcular_duracion_laboral(inicio, fin)
-            return f"{d} {obtener_emoji_duracion(d.total_seconds()/3600)}"
-        return "En curso... 🛠️"
+            d = calcular_duracion_laboral(ini, fin)
+            horas = d.total_seconds() / 3600
+            emoji = "⚡" if horas < 4 else "⏳" if horas < 9 else "🐢"
+            return f"{d} {emoji}"
+        return "Trabajando... 🛠️"
 
-    df_final['Duración Real'] = df_final.apply(aplicar_formato, axis=1)
-    st.dataframe(df_final, use_container_width=True)
+    df_vista['Duración'] = df_vista.apply(format_row, axis=1)
+    st.dataframe(df_vista[["OT", "Empleado", "Tipo", "Estado", "Duración", "Descripcion"]], use_container_width=True)
