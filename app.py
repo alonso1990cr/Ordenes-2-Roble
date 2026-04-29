@@ -9,8 +9,22 @@ import plotly.express as px
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión OT - Roble", layout="wide")
-UTC_OFFSET = 6 # Ajuste para Costa Rica
-CORREO_COPIA = "sa.alterna@gmail.com" # Copia obligatoria de supervisión
+UTC_OFFSET = 6 
+CORREO_COPIA = "sa.alterna@gmail.com"
+
+# --- ESTILO PERSONALIZADO (RELLENO VERDE) ---
+st.markdown("""
+    <style>
+    /* Color de fondo verde para campos de entrada */
+    .stTextInput > div > div > input, 
+    .stTextArea > div > div > textarea,
+    .stSelectbox > div > div > div,
+    .stMultiSelect > div > div {
+        background-color: #e8f5e9 !important;
+        color: #1b5e20 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- FUNCIONES DE PERSISTENCIA ---
 def cargar_datos(archivo, columnas):
@@ -49,9 +63,8 @@ def calcular_duracion_laboral(inicio, fin):
     total_segundos = 0
     curr = inicio
     while curr < fin:
-        # Lógica de horario laboral solicitada para Costa Rica
-        if curr.weekday() < 5: h_ini, h_fin, almuerzo = 8, 17, True # L-V
-        elif curr.weekday() == 5: h_ini, h_fin, almuerzo = 7, 12, False # S
+        if curr.weekday() < 5: h_ini, h_fin, almuerzo = 8, 17, True
+        elif curr.weekday() == 5: h_ini, h_fin, almuerzo = 7, 12, False
         else:
             curr = (curr + timedelta(days=1)).replace(hour=8, minute=0)
             continue
@@ -59,7 +72,7 @@ def calcular_duracion_laboral(inicio, fin):
         sal = min(fin, curr.replace(hour=h_fin, minute=0, second=0))
         if ent < sal:
             seg = (sal - ent).total_seconds()
-            if almuerzo and ent.hour < 12 and sal.hour >= 13: seg -= 3600 # Descuento almuerzo
+            if almuerzo and ent.hour < 12 and sal.hour >= 13: seg -= 3600
             total_segundos += max(0, seg)
         curr = (curr + timedelta(days=1)).replace(hour=h_ini, minute=0)
     return timedelta(seconds=total_segundos)
@@ -68,18 +81,13 @@ def calcular_duracion_laboral(inicio, fin):
 df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
 df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
 
-# --- MENÚ PRINCIPAL (REORDENADO CON EMOTICONES) ---
+# --- MENÚ PRINCIPAL ---
 menu = st.sidebar.selectbox(
     "MENÚ PRINCIPAL", 
-    [
-        "👥 Gestión de Empleados", 
-        "📝 Nueva Orden de Trabajo", 
-        "🔍 Cierre y Consulta de OT", 
-        "📊 Dashboard"
-    ]
+    ["👥 Gestión de Empleados", "📝 Nueva Orden de Trabajo", "🔍 Cierre y Consulta de OT", "📊 Dashboard"]
 )
 
-# 1. GESTIÓN DE EMPLEADOS (PRIMERO CON "IF")
+# 1. GESTIÓN DE EMPLEADOS
 if menu == "👥 Gestión de Empleados":
     st.header("👥 Gestión de Operarios")
     col_reg, col_mod, col_del = st.columns(3)
@@ -124,66 +132,83 @@ if menu == "👥 Gestión de Empleados":
     st.divider()
     st.table(df_emp)
 
-# 2. NUEVA ORDEN DE TRABAJO (INCLUYE CASOS 24H E ISO)
+# 2. NUEVA ORDEN DE TRABAJO
 elif menu == "📝 Nueva Orden de Trabajo":
     st.header("📝 Apertura de OT")
     if df_emp.empty: 
         st.warning("Debe registrar empleados primero.")
     else:
-        with st.form("nueva_ot"):
+        with st.form("nueva_ot", clear_on_submit=True):
             operario = st.selectbox("Operario", df_emp['Nombre'])
             tipo = st.radio("Tipo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
             desc = st.text_area("Descripción")
             if st.form_submit_button("Generar OT"):
-                ahora = obtener_fecha_cr()
-                num_ot = ahora.strftime("%Y%m%d-%H%M")
-                nueva = {"OT": num_ot, "Empleado": operario, "Descripcion": desc, 
-                         "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
-                         "Estado": "Abierta", "Fin": "", "Comentarios": ""}
-                df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
-                guardar_datos(df_ot, "ordenes.csv")
-                st.success(f"OT #{num_ot} creada.")
+                if desc:
+                    ahora = obtener_fecha_cr()
+                    num_ot = ahora.strftime("%Y%m%d-%H%M")
+                    nueva = {"OT": num_ot, "Empleado": operario, "Descripcion": desc, 
+                             "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
+                             "Estado": "Abierta", "Fin": "", "Comentarios": ""}
+                    df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
+                    guardar_datos(df_ot, "ordenes.csv")
+                    st.success(f"OT #{num_ot} creada.")
+                    st.rerun()
 
-# 3. CIERRE Y CONSULTA (CON PESTAÑAS SEPARADAS)
+# 3. CIERRE Y CONSULTA (CORREGIDO)
 elif menu == "🔍 Cierre y Consulta de OT":
     st.header("🔍 Seguimiento de Órdenes")
     t_abiertas, t_cerradas = st.tabs(["Abiertas", "Cerradas"])
     
     with t_abiertas:
-        abiertas = df_ot[df_ot['Estado'] == "Abierta"]
-        if abiertas.empty: st.info("No hay órdenes abiertas.")
+        abiertas = df_ot[df_ot['Estado'] == "Abierta"].copy()
+        if abiertas.empty: 
+            st.info("No hay órdenes abiertas.")
         else:
             st.dataframe(abiertas, use_container_width=True)
-            ot_id = st.selectbox("Seleccione ID para cerrar:", abiertas['OT'])
-            idx_ot = df_ot.index[df_ot['OT'] == ot_id].tolist()[0]
+            
+            # Crear identificador único para el selectbox
+            abiertas['Seleccion'] = abiertas['OT'] + " | " + abiertas['Descripcion']
+            opcion_sel = st.selectbox("Seleccione ID y Descripción para cerrar:", abiertas['Seleccion'])
+            
+            # Extraer datos para búsqueda exacta
+            ot_id_sel = opcion_sel.split(" | ")[0]
+            desc_sel = opcion_sel.split(" | ")[1]
+            
+            # Encontrar el índice exacto
+            idx_ot = df_ot.index[(df_ot['OT'] == ot_id_sel) & (df_ot['Descripcion'] == desc_sel)].tolist()[0]
+            
             with st.form("form_cierre"):
                 coment = st.text_area("Comentarios", value=df_ot.at[idx_ot, 'Comentarios'])
                 accion = st.selectbox("Estado", ["Abierta", "Cerrada"])
-                if st.form_submit_button("Confirmar"):
+                if st.form_submit_button("Confirmar Cambios"):
                     df_ot.at[idx_ot, 'Comentarios'] = coment
                     df_ot.at[idx_ot, 'Estado'] = accion
                     if accion == "Cerrada":
                         df_ot.at[idx_ot, 'Fin'] = obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S")
+                    
                     guardar_datos(df_ot, "ordenes.csv")
-                    st.success("Guardado.")
+                    st.success("Orden actualizada.")
                     st.rerun()
 
     with t_cerradas:
         cerradas = df_ot[df_ot['Estado'] == "Cerrada"].copy()
-        if cerradas.empty: st.info("No hay historial.")
+        if cerradas.empty: 
+            st.info("No hay historial.")
         else:
             def calc_dur(row):
-                ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
-                fin = datetime.strptime(row['Fin'], "%Y-%m-%d %H:%M:%S")
-                return str(calcular_duracion_laboral(ini, fin))
+                try:
+                    ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
+                    fin = datetime.strptime(row['Fin'], "%Y-%m-%d %H:%M:%S")
+                    return str(calcular_duracion_laboral(ini, fin))
+                except: return "N/A"
             cerradas['Duración'] = cerradas.apply(calc_dur, axis=1)
             st.dataframe(cerradas, use_container_width=True)
 
-# 4. DASHBOARD (AL FINAL)
+# 4. DASHBOARD
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
     if df_ot.empty: 
-        st.info("No hay datos registrados aún.")
+        st.info("No hay datos.")
     else:
         df_dash = df_ot.copy()
         df_dash['Inicio'] = pd.to_datetime(df_dash['Inicio'])
@@ -210,5 +235,5 @@ elif menu == "📊 Dashboard":
         c2.metric("Cerradas", len(df_f[df_f['Estado'] == 'Cerrada']))
         c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
 
-        fig = px.bar(df_f, x='OT', y='Horas', color='Empleado', title="Horas Laboradas por Orden")
+        fig = px.bar(df_f, x='OT', y='Horas', color='Empleado', title="Horas por Orden")
         st.plotly_chart(fig, use_container_width=True)
