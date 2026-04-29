@@ -55,6 +55,52 @@ menu = st.sidebar.selectbox(
     "Seleccione una sección:", 
     ["👥 Empleados", "📝 Nueva OT", "🔍 Cierre y Consulta", "📊 Dashboard"]
 )
+
+# --- FILTROS PARA EL DASHBOARD ---
+# Solo se muestran si el usuario está en la sección de Dashboard
+filtros_activos = False
+if menu == "📊 Dashboard" and not df_ot.empty:
+    st.sidebar.divider()
+    st.sidebar.subheader("🎯 Filtros de Análisis")
+    
+    # Convertir columna Inicio a datetime para filtrar
+    df_ot['Inicio_dt'] = pd.to_datetime(df_ot['Inicio'], errors='coerce')
+    
+    # Filtro de Fechas
+    fecha_min = df_ot['Inicio_dt'].min().date() if not df_ot['Inicio_dt'].dropna().empty else obtener_fecha_cr().date()
+    fecha_max = obtener_fecha_cr().date()
+    
+    rango = st.sidebar.date_input("Rango de Fechas", [fecha_min, fecha_max])
+    
+    # Filtro de Operario
+    lista_ops = ["Todos"] + sorted(df_ot['Empleado'].unique().tolist())
+    op_sel = st.sidebar.selectbox("Filtrar por Operario", lista_ops)
+    
+    # Filtro de Tipo
+    lista_tipos = ["Todos"] + sorted(df_ot['Tipo'].unique().tolist())
+    tipo_sel = st.sidebar.selectbox("Filtrar por Tipo de Trabajo", lista_tipos)
+    
+    # Aplicar Filtros
+    df_filtrado = df_ot.copy()
+    
+    # Aplicar rango de fechas
+    if len(rango) == 2:
+        inicio_f, fin_f = rango
+        df_filtrado = df_filtrado[
+            (df_filtrado['Inicio_dt'].dt.date >= inicio_f) & 
+            (df_filtrado['Inicio_dt'].dt.date <= fin_f)
+        ]
+    
+    # Aplicar Operario
+    if op_sel != "Todos":
+        df_filtrado = df_filtrado[df_filtrado['Empleado'] == op_sel]
+        
+    # Aplicar Tipo
+    if tipo_sel != "Todos":
+        df_filtrado = df_filtrado[df_filtrado['Tipo'] == tipo_sel]
+        
+    filtros_activos = True
+
 st.sidebar.divider()
 
 # --- LÓGICA DE SECCIONES ---
@@ -155,7 +201,6 @@ elif menu == "🔍 Cierre y Consulta":
                     if st.form_submit_button("Actualizar y Guardar"):
                         ahora_act = obtener_fecha_cr()
                         
-                        # Corrección de la línea con error
                         if df_ot.at[idx, 'Estado'] == "Abierta":
                             inicio_dt = datetime.strptime(df_ot.at[idx, 'Inicio'], "%Y-%m-%d %H:%M:%S")
                             dif_seg = (ahora_act - inicio_dt).total_seconds()
@@ -179,7 +224,45 @@ elif menu == "🔍 Cierre y Consulta":
 
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
-    if not df_ot.empty:
-        df_d = df_ot.copy()
-        df_d['Horas'] = pd.to_numeric(df_d['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
-        st.plotly_chart(px.bar(df_d, x='OT', y='Horas', color='Tipo', title="Inversión de Horas"), use_container_width=True)
+    
+    if df_ot.empty:
+        st.info("No hay datos disponibles para mostrar el dashboard.")
+    else:
+        # Usar el dataframe filtrado si los filtros están activos
+        df_final = df_filtrado if filtros_activos else df_ot.copy()
+        
+        if df_final.empty:
+            st.warning("No hay datos que coincidan con los filtros seleccionados.")
+        else:
+            # Cálculos de métricas rápidas
+            df_final['Horas'] = pd.to_numeric(df_final['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
+            total_ots = len(df_final)
+            horas_totales = df_final['Horas'].sum()
+            ots_cerradas = len(df_final[df_final['Estado'] == "Cerrada"])
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total de Órdenes", total_ots)
+            c2.metric("Horas Invertidas", f"{horas_totales:.2f} h")
+            c3.metric("Órdenes Cerradas", ots_cerradas)
+            
+            st.divider()
+            
+            # Gráficas
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                fig1 = px.bar(df_final, x='OT', y='Horas', color='Tipo', 
+                              title="Horas por Orden de Trabajo",
+                              labels={'Horas': 'Horas Acumuladas', 'OT': 'Número de OT'})
+                st.plotly_chart(fig1, use_container_width=True)
+                
+            with col_g2:
+                fig2 = px.pie(df_final, names='Estado', title="Distribución por Estado")
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # Gráfica por Operario
+            fig3 = px.bar(df_final.groupby('Empleado')['Horas'].sum().reset_index(), 
+                          x='Empleado', y='Horas', 
+                          title="Carga de Trabajo por Operario (Horas Totales)",
+                          color_discrete_sequence=['#ff4b4b'])
+            st.plotly_chart(fig3, use_container_width=True)
