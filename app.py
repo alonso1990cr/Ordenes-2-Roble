@@ -67,47 +67,20 @@ def calcular_duracion_laboral(inicio, fin):
 df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
 df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
 
-# --- MENÚ PRINCIPAL ---
-menu = st.sidebar.selectbox("MENÚ PRINCIPAL", ["Dashboard", "Gestión de Empleados", "Nueva Orden de Trabajo", "Cierre y Consulta de OT"])
+# --- MENÚ PRINCIPAL (REORDENADO CON EMOTICONES) ---
+# El Dashboard se mueve al final de la lista
+menu = st.sidebar.selectbox(
+    "MENÚ PRINCIPAL", 
+    [
+        "👥 Gestión de Empleados", 
+        "📝 Nueva Orden de Trabajo", 
+        "🔍 Cierre y Consulta de OT", 
+        "📊 Dashboard"
+    ]
+)
 
-# 1. DASHBOARD
-if menu == "Dashboard":
-    st.header("📊 Dashboard de Rendimiento")
-    if df_ot.empty: 
-        st.info("No hay datos registrados aún.")
-    else:
-        df_dash = df_ot.copy()
-        df_dash['Inicio'] = pd.to_datetime(df_dash['Inicio'])
-        df_dash['Fin'] = pd.to_datetime(df_dash['Fin'], errors='coerce')
-        
-        def get_hrs(row):
-            if pd.notna(row['Fin']):
-                d = calcular_duracion_laboral(row['Inicio'], row['Fin'])
-                return round(d.total_seconds() / 3600, 2)
-            return 0
-        df_dash['Horas'] = df_dash.apply(get_hrs, axis=1)
-
-        f_emp = st.sidebar.selectbox("Filtrar Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
-        
-        # Filtros de fecha
-        fecha_min = df_dash['Inicio'].min().date() if not df_dash.empty else obtener_fecha_cr().date()
-        f_ini = st.sidebar.date_input("Desde", fecha_min)
-        f_fin = st.sidebar.date_input("Hasta", obtener_fecha_cr().date())
-
-        mask = (df_dash['Inicio'].dt.date >= f_ini) & (df_dash['Inicio'].dt.date <= f_fin)
-        if f_emp != "TODOS": mask = mask & (df_dash['Empleado'] == f_emp)
-        df_f = df_dash.loc[mask]
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total OTs", len(df_f))
-        c2.metric("Cerradas", len(df_f[df_f['Estado'] == 'Cerrada']))
-        c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
-
-        fig = px.bar(df_f, x='OT', y='Horas', color='Empleado', title="Horas Laboradas por Orden")
-        st.plotly_chart(fig, use_container_width=True)
-
-# 2. GESTIÓN DE EMPLEADOS
-elif menu == "Gestión de Empleados":
+# 1. GESTIÓN DE EMPLEADOS
+if menu == "👥 Gestión de Empleados":
     st.header("👥 Gestión de Operarios")
     
     col_reg, col_mod, col_del = st.columns(3)
@@ -153,8 +126,8 @@ elif menu == "Gestión de Empleados":
     st.subheader("Lista de Operarios")
     st.table(df_emp)
 
-# 3. NUEVA ORDEN DE TRABAJO
-elif menu == "Nueva Orden de Trabajo":
+# 2. NUEVA ORDEN DE TRABAJO
+elif menu == "📝 Nueva Orden de Trabajo":
     st.header("📝 Apertura de OT")
     if df_emp.empty: 
         st.warning("Debe registrar empleados primero.")
@@ -173,8 +146,8 @@ elif menu == "Nueva Orden de Trabajo":
                 guardar_datos(df_ot, "ordenes.csv")
                 st.success(f"OT #{num_ot} creada.")
 
-# 4. CIERRE Y CONSULTA
-elif menu == "Cierre y Consulta de OT":
+# 3. CIERRE Y CONSULTA
+elif menu == "🔍 Cierre y Consulta de OT":
     st.header("🔍 Seguimiento de Órdenes")
     t_abiertas, t_cerradas = st.tabs(["Abiertas", "Cerradas"])
     
@@ -207,3 +180,38 @@ elif menu == "Cierre y Consulta de OT":
                 return str(calcular_duracion_laboral(ini, fin))
             cerradas['Duración'] = cerradas.apply(calc_dur, axis=1)
             st.dataframe(cerradas, use_container_width=True)
+
+# 4. DASHBOARD (AL FINAL)
+elif menu == "📊 Dashboard":
+    st.header("📊 Dashboard de Rendimiento")
+    if df_ot.empty: 
+        st.info("No hay datos registrados aún.")
+    else:
+        df_dash = df_ot.copy()
+        df_dash['Inicio'] = pd.to_datetime(df_dash['Inicio'])
+        df_dash['Fin'] = pd.to_datetime(df_dash['Fin'], errors='coerce')
+        
+        def get_hrs(row):
+            if pd.notna(row['Fin']):
+                d = calcular_duracion_laboral(row['Inicio'], row['Fin'])
+                return round(d.total_seconds() / 3600, 2)
+            return 0
+        df_dash['Horas'] = df_dash.apply(get_hrs, axis=1)
+
+        f_emp = st.sidebar.selectbox("Filtrar Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
+        
+        fecha_min = df_dash['Inicio'].min().date() if not df_dash.empty else obtener_fecha_cr().date()
+        f_ini = st.sidebar.date_input("Desde", fecha_min)
+        f_fin = st.sidebar.date_input("Hasta", obtener_fecha_cr().date())
+
+        mask = (df_dash['Inicio'].dt.date >= f_ini) & (df_dash['Inicio'].dt.date <= f_fin)
+        if f_emp != "TODOS": mask = mask & (df_dash['Empleado'] == f_emp)
+        df_f = df_dash.loc[mask]
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total OTs", len(df_f))
+        c2.metric("Cerradas", len(df_f[df_f['Estado'] == 'Cerrada']))
+        c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
+
+        fig = px.bar(df_f, x='OT', y='Horas', color='Empleado', title="Horas Laboradas por Orden")
+        st.plotly_chart(fig, use_container_width=True)
