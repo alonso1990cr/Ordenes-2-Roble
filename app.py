@@ -42,6 +42,18 @@ def guardar_datos(df, archivo):
 def obtener_fecha_cr():
     return datetime.utcnow() - timedelta(hours=UTC_OFFSET)
 
+def generar_siguiente_ot(df_ot):
+    if df_ot.empty:
+        return "0001"
+    try:
+        # Intentamos obtener el último número y sumamos 1
+        ultimo_num = int(df_ot['OT'].iloc[-1])
+        nuevo_num = ultimo_num + 1
+        return f"{nuevo_num:04d}"
+    except:
+        # Si el formato anterior era fecha, reiniciamos a un número alto o 0001
+        return "0001"
+
 def enviar_correo(destinatario, asunto, cuerpo):
     try:
         user = st.secrets["emails"]["sender_user"]
@@ -132,7 +144,7 @@ if menu == "👥 Gestión de Empleados":
     st.divider()
     st.table(df_emp)
 
-# 2. NUEVA ORDEN DE TRABAJO
+# 2. NUEVA ORDEN DE TRABAJO (NUMERACIÓN 4 DÍGITOS)
 elif menu == "📝 Nueva Orden de Trabajo":
     st.header("📝 Apertura de OT")
     if df_emp.empty: 
@@ -142,16 +154,19 @@ elif menu == "📝 Nueva Orden de Trabajo":
             operario = st.selectbox("Operario", df_emp['Nombre'])
             tipo = st.radio("Tipo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
             desc = st.text_area("Descripción")
+            
             if st.form_submit_button("Generar OT"):
                 if desc:
                     ahora = obtener_fecha_cr()
-                    num_ot = ahora.strftime("%Y%m%d-%H%M")
+                    # NUEVA LÓGICA: Número correlativo de 4 dígitos
+                    num_ot = generar_siguiente_ot(df_ot)
+                    
                     nueva = {"OT": num_ot, "Empleado": operario, "Descripcion": desc, 
                              "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
                              "Estado": "Abierta", "Fin": "", "Comentarios": ""}
                     df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
                     guardar_datos(df_ot, "ordenes.csv")
-                    st.success(f"OT #{num_ot} creada.")
+                    st.success(f"OT #{num_ot} creada con éxito.")
                     st.rerun()
 
 # 3. CIERRE Y CONSULTA
@@ -220,9 +235,9 @@ elif menu == "📊 Dashboard":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except:
-            st.sidebar.warning("Nota: xlsxwriter no detectado. El Excel no será protegido.")
+            st.sidebar.warning("Nota: xlsxwriter no detectado.")
 
-        # Filtros y Gráficos
+        # Filtros
         df_dash = df_ot.copy()
         df_dash['Inicio'] = pd.to_datetime(df_dash['Inicio'])
         df_dash['Fin'] = pd.to_datetime(df_dash['Fin'], errors='coerce')
@@ -238,7 +253,8 @@ elif menu == "📊 Dashboard":
         f_emp = st.sidebar.selectbox("Por Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
         f_tipo = st.sidebar.selectbox("Por Tipo de OT:", ["TODOS", "Preventivo", "Correctivo", "Casos 24h", "Casos ISO"])
         
-        fecha_min = df_dash['Inicio'].min().date()
+        # Manejo de fecha mínima para evitar errores si no hay datos
+        fecha_min = df_dash['Inicio'].min().date() if not df_dash.empty else obtener_fecha_cr().date()
         f_ini = st.sidebar.date_input("Desde", fecha_min)
         f_fin = st.sidebar.date_input("Hasta", obtener_fecha_cr().date())
 
@@ -254,6 +270,7 @@ elif menu == "📊 Dashboard":
         c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
 
         if not df_f.empty:
+            # El eje X ahora mostrará números como 0001, 0002, mucho más limpio
             fig = px.bar(df_f, x='OT', y='Horas', color='Tipo', 
                          hover_data=['Empleado', 'Descripcion'],
                          title=f"Horas Laboradas (Filtro: {f_tipo})")
