@@ -6,6 +6,7 @@ import plotly.express as px
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from PIL import Image  # Para validación extra de archivos
 
 # --- CONFIGURACIÓN DE CORREO (SMTP) ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -69,8 +70,7 @@ df_ot = cargar_datos("ordenes.csv", cols_ot)
 st.sidebar.title("🛠️ Panel de Control")
 menu = st.sidebar.selectbox("Seleccione sección:", ["👥 Empleados", "📝 Nueva OT", "🔍 Cierre y Consulta", "📊 Dashboard"])
 
-# --- INICIO DE LÓGICA PRINCIPAL ---
-
+# --- LÓGICA DE EMPLEADOS ---
 if menu == "👥 Empleados":
     st.header("👥 Gestión de Personal")
     t1, t2, t3 = st.tabs(["➕ Registrar", "✏️ Modificar", "🗑️ Eliminar"])
@@ -91,7 +91,7 @@ if menu == "👥 Empleados":
             with st.form("edit_emp"):
                 new_n = st.text_input("Nombre", value=df_emp.at[idx_m, 'Nombre'])
                 new_c = st.text_input("Correo", value=df_emp.at[idx_m, 'Correo'])
-                if st.form_submit_button("Actualizar Datos"):
+                if st.form_submit_button("Actualizar"):
                     df_emp.at[idx_m, 'Nombre'], df_emp.at[idx_m, 'Correo'] = new_n, new_c
                     guardar_datos(df_emp, "empleados.csv")
                     st.success("Actualizado"); st.rerun()
@@ -99,25 +99,25 @@ if menu == "👥 Empleados":
     with t3:
         if not df_emp.empty:
             borrar = st.selectbox("Seleccione empleado a eliminar:", df_emp['Nombre'])
-            conf = st.checkbox(f"Confirmo eliminación de {borrar}")
+            conf = st.checkbox(f"Confirmar eliminación de {borrar}")
             if st.button("Eliminar Permanentemente") and conf:
                 df_emp = df_emp[df_emp['Nombre'] != borrar]
                 guardar_datos(df_emp, "empleados.csv"); st.rerun()
     st.table(df_emp)
 
+# --- LÓGICA DE NUEVA OT ---
 elif menu == "📝 Nueva OT":
     st.header("📝 Apertura de Orden de Trabajo")
-    if df_emp.empty: 
-        st.warning("Registre operarios primero")
+    if df_emp.empty: st.warning("Registre operarios primero")
     else:
         with st.form("f_ot", clear_on_submit=True):
             op = st.selectbox("Operario Asignado", df_emp['Nombre'])
-            tp = st.radio("Tipo de Trabajo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
-            ds = st.text_area("Descripción del Hallazgo")
-            foto = st.file_uploader("Adjuntar Foto", type=["jpg", "png", "jpeg"])
-            cp = st.text_input("Correo copia adicional")
+            tp = st.radio("Tipo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
+            ds = st.text_area("Descripción")
+            foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
+            cp = st.text_input("Copia a")
             
-            if st.form_submit_button("Generar y Notificar"):
+            if st.form_submit_button("Generar Orden"):
                 id_ot = f"{len(df_ot) + 1:04d}"
                 correo_op = df_emp[df_emp['Nombre'] == op]['Correo'].values[0]
                 nom_foto = f"OT_{id_ot}.jpg" if foto else "Sin foto"
@@ -130,8 +130,9 @@ elif menu == "📝 Nueva OT":
                 df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
                 guardar_datos(df_ot, "ordenes.csv")
                 enviar_notificacion(["sa.alterna@gmail.com", correo_op, cp], f"Apertura OT #{id_ot}", f"OT: #{id_ot}\nOperario: {op}\nHallazgo: {ds}")
-                st.success(f"OT #{id_ot} creada."); st.rerun()
+                st.success(f"OT #{id_ot} guardada."); st.rerun()
 
+# --- LÓGICA DE CIERRE Y CONSULTA ---
 elif menu == "🔍 Cierre y Consulta":
     st.header("🔍 Gestión de Cierre y Consulta")
     tab1, tab2 = st.tabs(["Órdenes Activas", "Historial Completo"])
@@ -156,17 +157,28 @@ elif menu == "🔍 Cierre y Consulta":
                 id_sel = sel.split(" | ")[0]
                 idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
                 
-                # Validación de imagen
+                # --- VALIDACIÓN ROBUSTA DE IMAGEN ---
                 f_nom = df_ot.at[idx, 'Foto']
                 ruta_foto = os.path.join("fotos", f_nom)
-                if f_nom != "Sin foto" and os.path.exists(ruta_foto) and os.path.getsize(ruta_foto) > 0:
-                    st.image(ruta_foto, width=350, caption=f"Evidencia OT #{id_sel}")
-                else:
-                    st.info("ℹ️ No hay imagen disponible para esta orden.")
                 
+                foto_mostrada = False
+                if f_nom != "Sin foto" and os.path.exists(ruta_foto):
+                    try:
+                        # Intentamos abrir con Pillow para asegurar que el archivo es legible
+                        img_valida = Image.open(ruta_foto)
+                        st.image(img_valida, width=350, caption=f"Evidencia OT #{id_sel}")
+                        foto_mostrada = True
+                    except Exception:
+                        st.warning("⚠️ El archivo de imagen existe pero no se puede abrir.")
+                
+                if not foto_mostrada and f_nom != "Sin foto":
+                    st.info("ℹ️ No hay imagen disponible para esta orden.")
+                elif f_nom == "Sin foto":
+                    st.info("ℹ️ Orden generada sin fotografía.")
+
                 with st.form("cierre_form"):
                     nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
-                    nuevo_com = st.text_area("Comentarios", value=df_ot.at[idx, 'Comentarios'])
+                    nuevo_com = st.text_area("Avances", value=df_ot.at[idx, 'Comentarios'])
                     
                     if st.form_submit_button("Actualizar Registro"):
                         ahora_act = obtener_fecha_cr()
@@ -179,22 +191,21 @@ elif menu == "🔍 Cierre y Consulta":
                         elif nuevo_est == "Cerrada":
                             df_ot.at[idx, 'Fin'] = ahora_act.strftime("%Y-%m-%d %H:%M:%S")
                             correo_op = df_emp[df_emp['Nombre'] == df_ot.at[idx, 'Empleado']]['Correo'].values[0]
-                            enviar_notificacion(["sa.alterna@gmail.com", correo_op, df_ot.at[idx, 'CorreoCopia']], f"Cierre OT #{id_sel}", f"OT CERRADA.\nComentarios: {nuevo_com}")
+                            enviar_notificacion(["sa.alterna@gmail.com", correo_op, df_ot.at[idx, 'CorreoCopia']], f"Cierre OT #{id_sel}", f"Cierre de OT #{id_sel}.\nComentarios: {nuevo_com}")
                         
                         guardar_datos(df_ot, "ordenes.csv"); st.rerun()
 
     with tab2:
         st.dataframe(df_ot.style.map(estilo_estados, subset=['Estado']), use_container_width=True)
 
+# --- LÓGICA DE DASHBOARD ---
 elif menu == "📊 Dashboard":
-    st.header("📊 Dashboard de Rendimiento")
+    st.header("📊 Dashboard")
     if not df_ot.empty:
         st.sidebar.divider()
-        st.sidebar.subheader("🎯 Filtros")
         df_ot['Inicio_dt'] = pd.to_datetime(df_ot['Inicio'], errors='coerce')
-        
         f_min = df_ot['Inicio_dt'].min().date() if not df_ot['Inicio_dt'].dropna().empty else obtener_fecha_cr().date()
-        rango = st.sidebar.date_input("Rango de Fechas", [f_min, obtener_fecha_cr().date()])
+        rango = st.sidebar.date_input("Fechas", [f_min, obtener_fecha_cr().date()])
         op_sel = st.sidebar.selectbox("Operario", ["Todos"] + sorted(df_ot['Empleado'].unique().tolist()))
         tp_sel = st.sidebar.selectbox("Tipo", ["Todos"] + sorted(df_ot['Tipo'].unique().tolist()))
 
@@ -205,11 +216,10 @@ elif menu == "📊 Dashboard":
         if tp_sel != "Todos": df_f = df_f[df_f['Tipo'] == tp_sel]
 
         df_f['Horas'] = pd.to_numeric(df_f['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
-        
         c1, c2, c3 = st.columns(3)
         c1.metric("Órdenes", len(df_f))
-        c2.metric("Horas Totales", f"{df_f['Horas'].sum():.2f}")
+        c2.metric("Horas", f"{df_f['Horas'].sum():.2f}")
         c3.metric("Cerradas", len(df_f[df_f['Estado'] == "Cerrada"]))
         
-        st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo', title="Horas por OT"), use_container_width=True)
-        st.plotly_chart(px.pie(df_f, names='Estado', title="Distribución de Estados"), use_container_width=True)
+        st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo'), use_container_width=True)
+        st.plotly_chart(px.pie(df_f, names='Estado'), use_container_width=True)
