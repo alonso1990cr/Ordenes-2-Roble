@@ -43,7 +43,7 @@ menu = st.sidebar.selectbox(
 
 if menu == "👥 Empleados":
     st.header("👥 Gestión de Operarios")
-    tab_reg, tab_gest = st.tabs(["Registrar Nuevo", "Gestionar Existentes"])
+    tab_reg, tab_mod, tab_del = st.tabs(["➕ Registrar", "✏️ Modificar", "🗑️ Eliminar"])
     
     with tab_reg:
         with st.form("add_emp", clear_on_submit=True):
@@ -56,26 +56,47 @@ if menu == "👥 Empleados":
                     st.success(f"Operario {n} registrado.")
                     st.rerun()
     
-    with tab_gest:
+    with tab_mod:
+        if df_emp.empty:
+            st.info("No hay empleados para modificar.")
+        else:
+            emp_sel = st.selectbox("Seleccione empleado a editar:", df_emp['Nombre'], key="mod_sel")
+            idx_m = df_emp.index[df_emp['Nombre'] == emp_sel].tolist()[0]
+            
+            with st.form("edit_emp"):
+                nuevo_nom = st.text_input("Nombre", value=df_emp.at[idx_m, 'Nombre'])
+                nuevo_cor = st.text_input("Correo", value=df_emp.at[idx_m, 'Correo'])
+                if st.form_submit_button("Guardar Cambios"):
+                    df_emp.at[idx_m, 'Nombre'] = nuevo_nom
+                    df_emp.at[idx_m, 'Correo'] = nuevo_cor
+                    guardar_datos(df_emp, "empleados.csv")
+                    st.success("Datos actualizados.")
+                    st.rerun()
+
+    with tab_del:
         if df_emp.empty:
             st.info("No hay empleados registrados.")
         else:
-            st.write("### Lista de Personal")
-            # Opción para eliminar
-            emp_a_borrar = st.selectbox("Seleccione un operario para eliminar:", ["---"] + df_emp['Nombre'].tolist())
-            if emp_a_borrar != "---":
-                if st.button("Eliminar Operario"):
-                    df_emp = df_emp[df_emp['Nombre'] != emp_a_borrar]
+            borrar_sel = st.selectbox("Seleccione empleado a eliminar:", df_emp['Nombre'], key="del_sel")
+            confirmar = st.checkbox(f"Confirmo que deseo eliminar a {borrar_sel} del sistema")
+            
+            if st.button("Eliminar Permanentemente"):
+                if confirmar:
+                    df_emp = df_emp[df_emp['Nombre'] != borrar_sel]
                     guardar_datos(df_emp, "empleados.csv")
-                    st.warning(f"Eliminado: {emp_a_borrar}")
+                    st.warning(f"Eliminado: {borrar_sel}")
                     st.rerun()
-            st.divider()
-            st.table(df_emp)
+                else:
+                    st.error("Debe marcar la casilla de confirmación antes de eliminar.")
+    
+    st.divider()
+    st.write("### Personal Actual")
+    st.table(df_emp)
 
 elif menu == "📝 Nueva OT":
     st.header("📝 Apertura de Orden de Trabajo")
     if df_emp.empty:
-        st.warning("Registre operarios primero en la sección de Empleados.")
+        st.warning("Registre operarios primero.")
     else:
         with st.form("f_ot", clear_on_submit=True):
             op = st.selectbox("Operario Asignado", df_emp['Nombre'])
@@ -137,7 +158,6 @@ elif menu == "🔍 Cierre y Consulta":
                 id_sel = sel.split(" | ")[0]
                 idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
                 
-                # MOSTRAR FOTO SI EXISTE
                 foto_nom = str(df_ot.at[idx, 'Foto'])
                 if foto_nom != "Sin foto" and foto_nom != "":
                     ruta = os.path.join("fotos", foto_nom)
@@ -146,7 +166,7 @@ elif menu == "🔍 Cierre y Consulta":
 
                 with st.form("form_cierre", clear_on_submit=True):
                     nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
-                    coment = st.text_area("Avances / Comentarios Finales", value=df_ot.at[idx, 'Comentarios'])
+                    coment = st.text_area("Avances", value=df_ot.at[idx, 'Comentarios'])
                     if st.form_submit_button("Actualizar y Guardar"):
                         ahora_act = obtener_fecha_cr()
                         if df_ot.at[idx, 'Estado'] == "Abierta":
@@ -166,9 +186,8 @@ elif menu == "🔍 Cierre y Consulta":
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
     if df_ot.empty:
-        st.info("No hay datos para mostrar.")
+        st.info("No hay datos.")
     else:
-        # FILTROS DE DASHBOARD RESTAURADOS
         st.sidebar.divider()
         st.sidebar.subheader("🎯 Filtros")
         df_ot['Inicio_dt'] = pd.to_datetime(df_ot['Inicio'], errors='coerce')
