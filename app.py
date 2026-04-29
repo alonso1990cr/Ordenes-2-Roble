@@ -6,7 +6,8 @@ import plotly.express as px
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from PIL import Image  # Para validación extra de archivos
+from PIL import Image
+import io
 
 # --- CONFIGURACIÓN DE CORREO (SMTP) ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -23,6 +24,7 @@ if not os.path.exists("fotos"):
 
 # --- FUNCIONES DE APOYO ---
 def obtener_fecha_cr():
+    # Retorna la fecha y hora actual de Costa Rica
     return datetime.utcnow() - timedelta(hours=UTC_OFFSET)
 
 def enviar_notificacion(destinatarios, asunto, cuerpo):
@@ -61,13 +63,39 @@ def estilo_estados(val):
     if val == 'Cerrada': return 'color: red; font-weight: bold'
     return ''
 
+# --- FUNCIÓN PARA EXCEL PROTEGIDO ---
+def generar_excel_protegido(df):
+    output = io.BytesIO()
+    # Usamos XlsxWriter como motor para permitir protección de hoja
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Historial_OT')
+        workbook  = writer.book
+        worksheet = writer.sheets['Historial_OT']
+        
+        # Formato de protección: Bloquea celdas y requiere contraseña para editar
+        formato_protegido = workbook.add_format({'locked': True})
+        worksheet.protect('Roble2026', {
+            'objects':               True,
+            'scenarios':             True,
+            'format_cells':          False,
+            'insert_columns':        False,
+            'delete_columns':        False,
+            'sort':                  False,
+            'autofilter':            True,
+        })
+    return output.getvalue()
+
 # --- CARGA DE DATOS ---
 cols_ot = ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios", "CorreoCopia", "TiempoAcumulado", "Foto"]
 df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
 df_ot = cargar_datos("ordenes.csv", cols_ot)
 
-# --- NAVEGACIÓN ---
+# --- BARRA LATERAL Y HORA DEL SISTEMA ---
 st.sidebar.title("🛠️ Panel de Control")
+# Mostrar hora actual de Costa Rica en el menú lateral
+hora_actual = obtener_fecha_cr().strftime("%d/%m/%Y %H:%M:%S")
+st.sidebar.info(f"🕒 **Hora CR:** {hora_actual}")
+
 menu = st.sidebar.selectbox("Seleccione sección:", ["👥 Empleados", "📝 Nueva OT", "🔍 Cierre y Consulta", "📊 Dashboard"])
 
 # --- LÓGICA DE EMPLEADOS ---
@@ -157,24 +185,17 @@ elif menu == "🔍 Cierre y Consulta":
                 id_sel = sel.split(" | ")[0]
                 idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
                 
-                # --- VALIDACIÓN ROBUSTA DE IMAGEN ---
                 f_nom = df_ot.at[idx, 'Foto']
                 ruta_foto = os.path.join("fotos", f_nom)
-                
                 foto_mostrada = False
                 if f_nom != "Sin foto" and os.path.exists(ruta_foto):
                     try:
-                        # Intentamos abrir con Pillow para asegurar que el archivo es legible
                         img_valida = Image.open(ruta_foto)
                         st.image(img_valida, width=350, caption=f"Evidencia OT #{id_sel}")
                         foto_mostrada = True
-                    except Exception:
-                        st.warning("⚠️ El archivo de imagen existe pero no se puede abrir.")
+                    except: st.warning("⚠️ Imagen no legible.")
                 
-                if not foto_mostrada and f_nom != "Sin foto":
-                    st.info("ℹ️ No hay imagen disponible para esta orden.")
-                elif f_nom == "Sin foto":
-                    st.info("ℹ️ Orden generada sin fotografía.")
+                if not foto_mostrada: st.info("ℹ️ Sin imagen disponible.")
 
                 with st.form("cierre_form"):
                     nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
@@ -191,12 +212,23 @@ elif menu == "🔍 Cierre y Consulta":
                         elif nuevo_est == "Cerrada":
                             df_ot.at[idx, 'Fin'] = ahora_act.strftime("%Y-%m-%d %H:%M:%S")
                             correo_op = df_emp[df_emp['Nombre'] == df_ot.at[idx, 'Empleado']]['Correo'].values[0]
-                            enviar_notificacion(["sa.alterna@gmail.com", correo_op, df_ot.at[idx, 'CorreoCopia']], f"Cierre OT #{id_sel}", f"Cierre de OT #{id_sel}.\nComentarios: {nuevo_com}")
+                            enviar_notificacion(["sa.alterna@gmail.com", correo_op, df_ot.at[idx, 'CorreoCopia']], f"Cierre OT #{id_sel}", f"Cierre OT #{id_sel}.\nComentarios: {nuevo_com}")
                         
                         guardar_datos(df_ot, "ordenes.csv"); st.rerun()
 
     with tab2:
+        st.write("### 📋 Historial General")
         st.dataframe(df_ot.style.map(estilo_estados, subset=['Estado']), use_container_width=True)
+        
+        # Botón para descargar Excel Protegido
+        if not df_ot.empty:
+            excel_data = generar_excel_protegido(df_ot)
+            st.download_button(
+                label="📥 Descargar Reporte Excel (Solo Lectura)",
+                data=excel_data,
+                file_name=f"Reporte_OT_{obtener_fecha_cr().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # --- LÓGICA DE DASHBOARD ---
 elif menu == "📊 Dashboard":
@@ -222,4 +254,3 @@ elif menu == "📊 Dashboard":
         c3.metric("Cerradas", len(df_f[df_f['Estado'] == "Cerrada"]))
         
         st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo'), use_container_width=True)
-        st.plotly_chart(px.pie(df_f, names='Estado'), use_container_width=True)
