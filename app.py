@@ -81,22 +81,59 @@ df_ot = cargar_datos("ordenes.csv", cols_ot)
 # --- MENÚ ---
 menu = st.sidebar.selectbox("MENÚ PRINCIPAL", ["👥 Empleados", "📝 Nueva OT", "🔍 Cierre y Consulta", "📊 Dashboard"])
 
-# 1. GESTIÓN DE EMPLEADOS
+# 1. GESTIÓN DE EMPLEADOS (NUEVAS FUNCIONES: MODIFICAR Y ELIMINAR)
 if menu == "👥 Empleados":
     st.header("👥 Gestión de Operarios")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Registrar Nuevo")
-        with st.form("add_emp", clear_on_submit=True):
-            n = st.text_input("Nombre Completo")
-            c = st.text_input("Correo Electrónico")
-            if st.form_submit_button("Registrar"):
-                if n and c:
-                    df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre":n,"Correo":c}])], ignore_index=True)
-                    guardar_datos(df_emp, "empleados.csv")
-                    st.success("Operario registrado.")
-                    st.rerun()
+    
+    tab_reg, tab_mod = st.tabs(["Registrar Nuevo", "Modificar / Eliminar"])
+    
+    with tab_reg:
+        col1, _ = st.columns([1, 1])
+        with col1:
+            with st.form("add_emp", clear_on_submit=True):
+                n = st.text_input("Nombre Completo")
+                c = st.text_input("Correo Electrónico")
+                if st.form_submit_button("Registrar"):
+                    if n and c:
+                        df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre":n,"Correo":c}])], ignore_index=True)
+                        guardar_datos(df_emp, "empleados.csv")
+                        st.success("Operario registrado.")
+                        st.rerun()
+
+    with tab_mod:
+        if df_emp.empty:
+            st.info("No hay empleados registrados.")
+        else:
+            emp_sel = st.selectbox("Seleccione empleado para editar:", df_emp['Nombre'])
+            idx_emp = df_emp.index[df_emp['Nombre'] == emp_sel].tolist()[0]
+            
+            with st.form("edit_emp"):
+                nuevo_nombre = st.text_input("Nombre", value=df_emp.at[idx_emp, 'Nombre'])
+                nuevo_correo = st.text_input("Correo", value=df_emp.at[idx_emp, 'Correo'])
+                
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.form_submit_button("💾 Guardar Cambios"):
+                        df_emp.at[idx_emp, 'Nombre'] = nuevo_nombre
+                        df_emp.at[idx_emp, 'Correo'] = nuevo_correo
+                        guardar_datos(df_emp, "empleados.csv")
+                        st.success("Datos actualizados.")
+                        st.rerun()
+                
+                with col_btn2:
+                    # El botón de borrar está dentro del form, pero usaremos un checkbox para confirmar
+                    confirmar = st.checkbox("Confirmar eliminación")
+                    if st.form_submit_button("🗑️ Eliminar Operario"):
+                        if confirmar:
+                            df_emp = df_emp.drop(idx_emp).reset_index(drop=True)
+                            guardar_datos(df_emp, "empleados.csv")
+                            st.warning("Operario eliminado.")
+                            st.rerun()
+                        else:
+                            st.error("Debe marcar el cuadro de confirmación para eliminar.")
+
     st.divider()
+    st.subheader("Lista Actual")
     st.table(df_emp)
 
 # 2. NUEVA ORDEN DE TRABAJO
@@ -137,12 +174,14 @@ elif menu == "🔍 Cierre y Consulta":
             st.info("No hay órdenes pendientes.")
         else:
             def calc_viva(row):
-                acum = float(row['TiempoAcumulado'])
-                if row['Estado'] == "Abierta":
-                    ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
-                    ahora = (obtener_fecha_cr() - ini).total_seconds()
-                    return str(timedelta(seconds=int(acum + ahora)))
-                return str(timedelta(seconds=int(acum)))
+                try:
+                    acum = float(row['TiempoAcumulado'])
+                    if row['Estado'] == "Abierta":
+                        ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
+                        ahora = (obtener_fecha_cr() - ini).total_seconds()
+                        return str(timedelta(seconds=int(acum + ahora)))
+                    return str(timedelta(seconds=int(acum)))
+                except: return "0:00:00"
 
             pendientes['Duración'] = pendientes.apply(calc_viva, axis=1)
             st.dataframe(pendientes[["OT", "Estado", "Empleado", "Duración", "Tipo", "Descripcion", "Comentarios"]], use_container_width=True)
@@ -179,7 +218,7 @@ elif menu == "🔍 Cierre y Consulta":
             cerradas['Duración Final'] = cerradas.apply(lambda r: str(timedelta(seconds=int(float(r['TiempoAcumulado'])))), axis=1)
             st.dataframe(cerradas[["OT", "Empleado", "Tipo", "Duración Final", "Fin", "Comentarios"]], use_container_width=True)
 
-# 4. DASHBOARD (CON FILTRO DE TIPO INCLUIDO)
+# 4. DASHBOARD
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
     if df_ot.empty:
@@ -190,38 +229,29 @@ elif menu == "📊 Dashboard":
         df_d = df_d.dropna(subset=['Inicio_DT'])
         df_d['Horas'] = df_d['TiempoAcumulado'].apply(lambda x: round(float(x)/3600, 2))
         
-        # --- FILTROS EN BARRA LATERAL ---
         hoy = obtener_fecha_cr().date()
         min_f = df_d['Inicio_DT'].min().date()
         
         f_ini = st.sidebar.date_input("Fecha Inicio", min_f)
         f_fin = st.sidebar.date_input("Fecha Fin", hoy)
-        f_op = st.sidebar.selectbox("Operario", ["TODOS"] + list(df_emp['Nombre'].unique()))
-        # AQUÍ ESTÁ EL FILTRO POR TIPO SOLICITADO
+        f_op = st.sidebar.selectbox("Operario", ["TODOS"] + list(df_emp['Nombre'].unique()) if not df_emp.empty else ["TODOS"])
         f_tp = st.sidebar.selectbox("Tipo de OT", ["TODOS", "Preventivo", "Correctivo", "Casos 24h", "Casos ISO"])
         
-        # Aplicar filtros
         mask = (df_d['Inicio_DT'].dt.date >= f_ini) & (df_d['Inicio_DT'].dt.date <= f_fin)
-        if f_op != "TODOS": 
-            mask &= (df_d['Empleado'] == f_op)
-        if f_tp != "TODOS":
-            mask &= (df_d['Tipo'] == f_tp)
+        if f_op != "TODOS": mask &= (df_d['Empleado'] == f_op)
+        if f_tp != "TODOS": mask &= (df_d['Tipo'] == f_tp)
         
         df_f = df_d[mask]
         
-        # Métricas
         c1, c2, c3 = st.columns(3)
         c1.metric("OTs Filtradas", len(df_f))
         c2.metric("Horas Totales", f"{df_f['Horas'].sum():.2f}")
         c3.metric("Promedio h/OT", f"{df_f['Horas'].mean():.2f}" if not df_f.empty else "0")
         
         if not df_f.empty:
-            fig = px.bar(df_f, x='OT', y='Horas', color='Tipo', 
-                         title=f"Inversión de Tiempo (Filtro: {f_tp})",
-                         hover_data=['Empleado', 'Estado', 'Descripcion'])
+            fig = px.bar(df_f, x='OT', y='Horas', color='Tipo', title=f"Inversión de Tiempo (Filtro: {f_tp})")
             st.plotly_chart(fig, use_container_width=True)
             
-            # Botón de Descarga
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_f.drop(columns=['Inicio_DT']).to_excel(writer, index=False, sheet_name='Reporte')
