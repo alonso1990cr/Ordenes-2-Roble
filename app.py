@@ -14,7 +14,13 @@ CORREO_COPIA = "sa.alterna@gmail.com"
 # --- FUNCIONES DE PERSISTENCIA ---
 def cargar_datos(archivo, columnas):
     if os.path.exists(archivo):
-        return pd.read_csv(archivo)
+        # Forzamos a que todas las columnas se lean como texto (string) para evitar el TypeError
+        df = pd.read_csv(archivo, dtype=str)
+        # Si faltan columnas por alguna razón, las agregamos
+        for col in columnas:
+            if col not in df.columns:
+                df[col] = ""
+        return df
     return pd.DataFrame(columns=columnas)
 
 def guardar_datos(df, archivo):
@@ -68,7 +74,7 @@ def calcular_duracion_laboral(inicio, fin):
 # --- INTERFAZ ---
 menu = st.sidebar.selectbox("MENÚ PRINCIPAL", ["Gestión de Empleados", "Nueva Orden de Trabajo", "Cierre y Consulta de OT"])
 
-# 1. GESTIÓN DE EMPLEADOS (EVITAR DUPLICADOS)
+# 1. GESTIÓN DE EMPLEADOS
 if menu == "Gestión de Empleados":
     st.header("👥 Registro de Operarios")
     df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
@@ -81,7 +87,6 @@ if menu == "Gestión de Empleados":
         
         if btn_guardar:
             if nom and ema:
-                # Si el nombre existe, lo sobreescribe. Si no, lo añade.
                 df_emp = df_emp[df_emp['Nombre'].str.upper() != nom.upper()]
                 nuevo = pd.DataFrame([{"Nombre": nom, "Correo": ema}])
                 df_emp = pd.concat([df_emp, nuevo], ignore_index=True)
@@ -93,27 +98,19 @@ if menu == "Gestión de Empleados":
     st.subheader("Personal Registrado")
     st.dataframe(df_emp, use_container_width=True)
 
-    if not df_emp.empty:
-        emp_borrar = st.selectbox("Seleccione para eliminar:", df_emp['Nombre'])
-        if st.button("Eliminar permanentemente"):
-            df_emp = df_emp[df_emp['Nombre'] != emp_borrar]
-            guardar_datos(df_emp, "empleados.csv")
-            st.rerun()
-
-# 2. NUEVA ORDEN DE TRABAJO (SOLO EMPLEADOS EXISTENTES)
+# 2. NUEVA ORDEN DE TRABAJO
 elif menu == "Nueva Orden de Trabajo":
     st.header("📝 Apertura de Orden de Trabajo")
     df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
     df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
 
     if df_emp.empty:
-        st.warning("⚠️ No hay empleados registrados. Vaya a la sección 'Gestión de Empleados' primero.")
+        st.warning("⚠️ No hay empleados registrados.")
     else:
         with st.form("form_nueva_ot"):
-            # Aquí solo aparecen los operarios registrados anteriormente
             operario = st.selectbox("Operario Asignado", df_emp['Nombre'])
             tipo = st.radio("Tipo de Trabajo", ["Preventivo", "Correctivo"])
-            desc = st.text_area("Descripción de la labor a realizar")
+            desc = st.text_area("Descripción de la labor")
             
             if st.form_submit_button("Generar Orden"):
                 ahora = obtener_fecha_cr()
@@ -124,76 +121,58 @@ elif menu == "Nueva Orden de Trabajo":
                     "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"),
                     "Tipo": tipo, "Estado": "Abierta", "Fin": "", "Comentarios": ""
                 }
-                df_ot = pd.concat([df_ot, pd.DataFrame([nueva_fila])], ignore_index=True)
+                # Convertimos a DataFrame asegurando que todo sea texto
+                df_nueva = pd.DataFrame([nueva_fila]).astype(str)
+                df_ot = pd.concat([df_ot, df_nueva], ignore_index=True)
                 guardar_datos(df_ot, "ordenes.csv")
                 
                 correo_dest = df_emp[df_emp['Nombre'] == operario]['Correo'].values[0]
-                cuerpo = f"Nueva OT #{num_ot}\nAsignada a: {operario}\nTipo: {tipo}\nDescripción: {desc}"
-                enviar_correo(correo_dest, f"Nueva OT #{num_ot}", cuerpo)
-                st.success(f"OT #{num_ot} creada y enviada a {operario}")
+                enviar_correo(correo_dest, f"Nueva OT #{num_ot}", f"OT #{num_ot}\nDescripción: {desc}")
+                st.success(f"OT #{num_ot} creada.")
 
-# 3. CIERRE Y CONSULTA (MODIFICAR Y SOBREESCRIBIR)
+# 3. CIERRE Y CONSULTA (Aquí estaba el error)
 elif menu == "Cierre y Consulta de OT":
     st.header("🔍 Seguimiento de Órdenes")
-    df_ot = cargar_datos("ordenes.csv", [])
-    df_emp = cargar_datos("empleados.csv", [])
+    df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
+    df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
     
     if not df_ot.empty:
-        filtro_emp = st.selectbox("Filtrar por operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
+        ot_id = st.selectbox("Seleccione el ID de la OT para trabajar:", df_ot['OT'].unique())
         
-        # Filtramos los datos según la consulta
-        df_mostrar = df_ot if filtro_emp == "TODOS" else df_ot[df_ot['Empleado'] == filtro_emp]
+        # Seleccionamos la fila específica
+        idx = df_ot.index[df_ot['OT'] == ot_id].tolist()[0]
+        datos_actuales = df_ot.loc[idx]
         
-        st.write("### Últimos Registros")
-        st.dataframe(df_mostrar.tail(10), use_container_width=True)
-        
-        # Lógica para modificar/cerrar una orden específica
-        st.divider()
-        st.write("### Modificar / Cerrar una Orden")
-        ot_id = st.selectbox("Seleccione el ID de la OT para trabajar:", df_mostrar['OT'].unique())
-        
-        # Cargamos datos actuales de esa OT
-        datos_actuales = df_ot[df_ot['OT'] == ot_id].iloc[0]
-        
-        with st.expander(f"Editar Orden #{ot_id}"):
-            nuevo_comentario = st.text_area("Comentarios de cierre o avance:", value=datos_actuales['Comentarios'] if pd.notna(datos_actuales['Comentarios']) else "")
-            nuevo_estado = st.selectbox("Estado actual:", ["Abierta", "Cerrada"], index=0 if datos_actuales['Estado']=="Abierta" else 1)
+        with st.form("form_edicion"):
+            st.write(f"### Editando Orden #{ot_id}")
+            # Usamos str() para asegurar que no pasamos valores nulos al widget
+            comentario_previo = str(datos_actuales['Comentarios']) if pd.notna(datos_actuales['Comentarios']) else ""
             
-            if st.button("Guardar Cambios y Sobreescribir"):
-                fecha_fin = obtener_fecha_cr()
+            nuevo_comentario = st.text_area("Comentarios de cierre o avance:", value=comentario_previo)
+            nuevo_estado = st.selectbox("Estado actual:", ["Abierta", "Cerrada"], 
+                                       index=0 if datos_actuales['Estado']=="Abierta" else 1)
+            
+            if st.form_submit_button("Guardar Cambios y Sobreescribir"):
+                # ACTUALIZACIÓN SEGURA: Convertimos la columna a objeto (texto) antes de asignar
+                df_ot['Comentarios'] = df_ot['Comentarios'].astype(object)
+                df_ot.at[idx, 'Comentarios'] = str(nuevo_comentario)
+                df_ot.at[idx, 'Estado'] = str(nuevo_estado)
                 
-                # Actualizamos la fila en el DataFrame original
-                df_ot.loc[df_ot['OT'] == ot_id, 'Comentarios'] = nuevo_comentario
-                df_ot.loc[df_ot['OT'] == ot_id, 'Estado'] = nuevo_estado
-                
-                if nuevo_estado == "Cerrada" and pd.isna(datos_actuales['Fin']):
-                    df_ot.loc[df_ot['OT'] == ot_id, 'Fin'] = fecha_fin.strftime("%Y-%m-%d %H:%M:%S")
+                if nuevo_estado == "Cerrada" and (pd.isna(datos_actuales['Fin']) or datos_actuales['Fin'] == ""):
+                    fecha_fin = obtener_fecha_cr()
+                    df_ot.at[idx, 'Fin'] = fecha_fin.strftime("%Y-%m-%d %H:%M:%S")
                     
-                    # Cálculo de duración para el correo
-                    ini_dt = datetime.strptime(datos_actuales['Inicio'], "%Y-%m-%d %H:%M:%S")
+                    # Cálculo de duración
+                    ini_dt = datetime.strptime(str(datos_actuales['Inicio']), "%Y-%m-%d %H:%M:%S")
                     duracion = calcular_duracion_laboral(ini_dt, fecha_fin)
                     
-                    # Envío de correo de cierre
+                    # Envío de correo
                     correo_dest = df_emp[df_emp['Nombre'] == datos_actuales['Empleado']]['Correo'].values[0]
-                    enviar_correo(correo_dest, f"CIERRE de OT #{ot_id}", f"La orden ha sido cerrada.\nDuración laboral: {duracion}\nComentarios: {nuevo_comentario}")
+                    enviar_correo(correo_dest, f"CIERRE de OT #{ot_id}", f"Cerrada con duración: {duracion}")
 
                 guardar_datos(df_ot, "ordenes.csv")
-                st.success("Registro actualizado y sobreescrito con éxito.")
+                st.success("Registro actualizado.")
                 st.rerun()
 
-# --- TABLA DE RESUMEN CON EMOJIS ---
-st.divider()
-st.subheader("📊 Resumen Histórico")
-df_final = cargar_datos("ordenes.csv", [])
-if not df_final.empty:
-    def aplicar_emojis(row):
-        if row['Estado'] == "Cerrada":
-            ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
-            fin = datetime.strptime(row['Fin'], "%Y-%m-%d %H:%M:%S")
-            d = calcular_duracion_laboral(ini, fin)
-            hrs = d.total_seconds() / 3600
-            return f"{d} " + ("⚡" if hrs < 3 else "⏳" if hrs < 8 else "🐢")
-        return "Pendiente 🛠️"
-
-    df_final['Tiempo Laborado'] = df_final.apply(aplicar_emojis, axis=1)
-    st.table(df_final[['OT', 'Empleado', 'Tipo', 'Estado', 'Tiempo Laborado']])
+    st.write("### Historial General")
+    st.dataframe(df_ot, use_container_width=True)
