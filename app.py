@@ -108,25 +108,40 @@ elif menu == "🔍 Cierre y Consulta":
     tab1, tab2 = st.tabs(["Órdenes Activas", "Historial Completo"])
     
     with tab1:
-        # 1. Filtramos las órdenes que no están cerradas
         pendientes = df_ot[df_ot['Estado'].str.contains("Abierta|En Pausa", case=False, na=False)].copy()
         
         if pendientes.empty:
             st.info("No hay órdenes pendientes de cierre.")
         else:
-            # --- TABLA DE DETALLES RESTAURADA ---
+            # --- CÁLCULO DE DURACIÓN PARA LA TABLA ---
+            ahora = obtener_fecha_cr()
+            def calcular_horas(row):
+                try:
+                    inicio = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
+                    acumulado = float(row['TiempoAcumulado'])
+                    if row['Estado'] == "Abierta":
+                        segundos_actuales = (ahora - inicio).total_seconds()
+                        return round((acumulado + segundos_actuales) / 3600, 2)
+                    return round(acumulado / 3600, 2)
+                except:
+                    return 0.0
+
+            pendientes['Duración (Hrs)'] = pendientes.apply(calcular_horas, axis=1)
+
             st.subheader("📋 Resumen de Órdenes en Proceso")
-            st.dataframe(pendientes[["OT", "Estado", "Empleado", "Tipo", "Inicio", "Descripcion"]], use_container_width=True)
+            # Agregamos Comentarios y Duración a la vista de tabla
+            st.dataframe(
+                pendientes[["OT", "Estado", "Empleado", "Tipo", "Inicio", "Duración (Hrs)", "Comentarios", "Descripcion"]], 
+                use_container_width=True
+            )
             
             st.divider()
             
-            # 2. Selector para editar
             opciones = pendientes['OT'] + " | " + pendientes['Empleado'] + " | " + pendientes['Descripcion']
             sel = st.selectbox("Seleccione Orden para gestionar cierre:", opciones)
             id_sel = sel.split(" | ")[0]
             idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
 
-            # 3. Mostrar Foto y Formulario
             col_foto, col_form = st.columns([1, 2])
             
             with col_foto:
@@ -135,8 +150,6 @@ elif menu == "🔍 Cierre y Consulta":
                     ruta = os.path.join("fotos", foto_nom)
                     if os.path.exists(ruta):
                         st.image(ruta, caption=f"Evidencia OT #{id_sel}")
-                    else:
-                        st.warning("Imagen no disponible")
                 else:
                     st.info("Sin foto adjunta")
 
@@ -147,9 +160,18 @@ elif menu == "🔍 Cierre y Consulta":
                     coment = st.text_area("Comentarios finales / Avances", value=df_ot.at[idx, 'Comentarios'])
                     
                     if st.form_submit_button("Actualizar y Guardar"):
-                        # Si se cierra, guardamos fecha fin
-                        if nuevo_est == "Cerrada":
-                            df_ot.at[idx, 'Fin'] = obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S")
+                        ahora_cierre = obtener_fecha_cr()
+                        
+                        # Lógica de acumulación de tiempo al cambiar estado
+                        if df_ot.at[idx, 'Estado'] == "Abierta":
+                            inicio_dt = datetime.strptime(df_ot.at[idx, 'Inicio'], "%Y-%m-%d %H:%M:%S")
+                            dif_segundos = (ahora_cierre - inicio_dt).total_seconds()
+                            df_ot.at[idx, 'TiempoAcumulado'] = str(float(df_ot.at[idx, 'TiempoAcumulado']) + dif_segundos)
+                        
+                        if nuevo_est == "Abierta":
+                            df_ot.at[idx, 'Inicio'] = ahora_cierre.strftime("%Y-%m-%d %H:%M:%S")
+                        elif nuevo_est == "Cerrada":
+                            df_ot.at[idx, 'Fin'] = ahora_cierre.strftime("%Y-%m-%d %H:%M:%S")
                         
                         df_ot.at[idx, 'Estado'] = nuevo_est
                         df_ot.at[idx, 'Comentarios'] = coment
@@ -158,16 +180,18 @@ elif menu == "🔍 Cierre y Consulta":
 
     with tab2:
         st.subheader("📚 Historial de todas las OTs")
-        st.dataframe(df_ot, use_container_width=True)
+        df_hist = df_ot.copy()
+        # También calculamos duración para el historial
+        df_hist['Horas Totales'] = pd.to_numeric(df_hist['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
+        st.dataframe(df_hist, use_container_width=True)
         
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            df_ot.to_excel(writer, index=False)
+            df_hist.to_excel(writer, index=False)
         st.download_button("📥 Descargar Reporte Completo (Excel)", buf.getvalue(), "base_datos_roble.xlsx")
 
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
-    # ... (Sección Dashboard con filtros restaurada en el paso anterior) ...
     if not df_ot.empty:
         df_d = df_ot.copy()
         df_d['Horas'] = pd.to_numeric(df_d['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
