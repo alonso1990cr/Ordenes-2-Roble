@@ -6,6 +6,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
 import plotly.express as px
+import io  # Necesario para la descarga de Excel
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión OT - Roble", layout="wide")
@@ -196,12 +197,27 @@ elif menu == "🔍 Cierre y Consulta de OT":
             cerradas['Duración'] = cerradas.apply(calc_dur, axis=1)
             st.dataframe(cerradas, use_container_width=True)
 
-# 4. DASHBOARD (CON FILTRO POR TIPO)
+# 4. DASHBOARD (CON BOTÓN DE EXCEL DE SOLO LECTURA)
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
+    
     if df_ot.empty: 
-        st.info("No hay datos.")
+        st.info("No hay datos registrados aún.")
     else:
+        # --- LÓGICA DE EXCEL (SOLO LECTURA AL DESCARGAR) ---
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_ot.to_excel(writer, index=False, sheet_name='Historial_OT')
+            # El archivo descargado es una copia estática, no modifica la base de datos CSV.
+        
+        st.sidebar.download_button(
+            label="📥 Descargar Reporte Excel (Solo Lectura)",
+            data=buffer.getvalue(),
+            file_name=f"Reporte_Mantenimiento_{obtener_fecha_cr().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.ms-excel"
+        )
+
+        # --- FILTROS ---
         df_dash = df_ot.copy()
         df_dash['Inicio'] = pd.to_datetime(df_dash['Inicio'])
         df_dash['Fin'] = pd.to_datetime(df_dash['Fin'], errors='coerce')
@@ -213,18 +229,14 @@ elif menu == "📊 Dashboard":
             return 0
         df_dash['Horas'] = df_dash.apply(get_hrs, axis=1)
 
-        # Filtros en la barra lateral
         st.sidebar.subheader("Filtros de Análisis")
         f_emp = st.sidebar.selectbox("Por Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
-        
-        # NUEVO FILTRO POR TIPO
         f_tipo = st.sidebar.selectbox("Por Tipo de OT:", ["TODOS", "Preventivo", "Correctivo", "Casos 24h", "Casos ISO"])
         
         fecha_min = df_dash['Inicio'].min().date() if not df_dash.empty else obtener_fecha_cr().date()
         f_ini = st.sidebar.date_input("Desde", fecha_min)
         f_fin = st.sidebar.date_input("Hasta", obtener_fecha_cr().date())
 
-        # Aplicación de filtros
         mask = (df_dash['Inicio'].dt.date >= f_ini) & (df_dash['Inicio'].dt.date <= f_fin)
         if f_emp != "TODOS": mask = mask & (df_dash['Empleado'] == f_emp)
         if f_tipo != "TODOS": mask = mask & (df_dash['Tipo'] == f_tipo)
@@ -236,11 +248,8 @@ elif menu == "📊 Dashboard":
         c2.metric("Cerradas", len(df_f[df_f['Estado'] == 'Cerrada']))
         c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
 
-        # Gráfico dinámico
         if not df_f.empty:
             fig = px.bar(df_f, x='OT', y='Horas', color='Tipo', 
                          hover_data=['Empleado', 'Descripcion'],
                          title=f"Horas Laboradas (Filtro: {f_tipo})")
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("No hay datos para los filtros seleccionados.")
