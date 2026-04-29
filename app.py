@@ -15,7 +15,6 @@ CORREO_COPIA = "sa.alterna@gmail.com"
 # --- ESTILO PERSONALIZADO (RELLENO VERDE) ---
 st.markdown("""
     <style>
-    /* Color de fondo verde para campos de entrada */
     .stTextInput > div > div > input, 
     .stTextArea > div > div > textarea,
     .stSelectbox > div > div > div,
@@ -154,7 +153,7 @@ elif menu == "📝 Nueva Orden de Trabajo":
                     st.success(f"OT #{num_ot} creada.")
                     st.rerun()
 
-# 3. CIERRE Y CONSULTA (CORREGIDO)
+# 3. CIERRE Y CONSULTA
 elif menu == "🔍 Cierre y Consulta de OT":
     st.header("🔍 Seguimiento de Órdenes")
     t_abiertas, t_cerradas = st.tabs(["Abiertas", "Cerradas"])
@@ -165,16 +164,10 @@ elif menu == "🔍 Cierre y Consulta de OT":
             st.info("No hay órdenes abiertas.")
         else:
             st.dataframe(abiertas, use_container_width=True)
-            
-            # Crear identificador único para el selectbox
             abiertas['Seleccion'] = abiertas['OT'] + " | " + abiertas['Descripcion']
             opcion_sel = st.selectbox("Seleccione ID y Descripción para cerrar:", abiertas['Seleccion'])
-            
-            # Extraer datos para búsqueda exacta
             ot_id_sel = opcion_sel.split(" | ")[0]
             desc_sel = opcion_sel.split(" | ")[1]
-            
-            # Encontrar el índice exacto
             idx_ot = df_ot.index[(df_ot['OT'] == ot_id_sel) & (df_ot['Descripcion'] == desc_sel)].tolist()[0]
             
             with st.form("form_cierre"):
@@ -185,7 +178,6 @@ elif menu == "🔍 Cierre y Consulta de OT":
                     df_ot.at[idx_ot, 'Estado'] = accion
                     if accion == "Cerrada":
                         df_ot.at[idx_ot, 'Fin'] = obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S")
-                    
                     guardar_datos(df_ot, "ordenes.csv")
                     st.success("Orden actualizada.")
                     st.rerun()
@@ -204,7 +196,7 @@ elif menu == "🔍 Cierre y Consulta de OT":
             cerradas['Duración'] = cerradas.apply(calc_dur, axis=1)
             st.dataframe(cerradas, use_container_width=True)
 
-# 4. DASHBOARD
+# 4. DASHBOARD (CON FILTRO POR TIPO)
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
     if df_ot.empty: 
@@ -221,19 +213,34 @@ elif menu == "📊 Dashboard":
             return 0
         df_dash['Horas'] = df_dash.apply(get_hrs, axis=1)
 
-        f_emp = st.sidebar.selectbox("Filtrar Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
+        # Filtros en la barra lateral
+        st.sidebar.subheader("Filtros de Análisis")
+        f_emp = st.sidebar.selectbox("Por Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
+        
+        # NUEVO FILTRO POR TIPO
+        f_tipo = st.sidebar.selectbox("Por Tipo de OT:", ["TODOS", "Preventivo", "Correctivo", "Casos 24h", "Casos ISO"])
+        
         fecha_min = df_dash['Inicio'].min().date() if not df_dash.empty else obtener_fecha_cr().date()
         f_ini = st.sidebar.date_input("Desde", fecha_min)
         f_fin = st.sidebar.date_input("Hasta", obtener_fecha_cr().date())
 
+        # Aplicación de filtros
         mask = (df_dash['Inicio'].dt.date >= f_ini) & (df_dash['Inicio'].dt.date <= f_fin)
         if f_emp != "TODOS": mask = mask & (df_dash['Empleado'] == f_emp)
+        if f_tipo != "TODOS": mask = mask & (df_dash['Tipo'] == f_tipo)
+        
         df_f = df_dash.loc[mask]
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total OTs", len(df_f))
+        c1.metric("Total OTs Filtradas", len(df_f))
         c2.metric("Cerradas", len(df_f[df_f['Estado'] == 'Cerrada']))
         c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
 
-        fig = px.bar(df_f, x='OT', y='Horas', color='Empleado', title="Horas por Orden")
-        st.plotly_chart(fig, use_container_width=True)
+        # Gráfico dinámico
+        if not df_f.empty:
+            fig = px.bar(df_f, x='OT', y='Horas', color='Tipo', 
+                         hover_data=['Empleado', 'Descripcion'],
+                         title=f"Horas Laboradas (Filtro: {f_tipo})")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No hay datos para los filtros seleccionados.")
