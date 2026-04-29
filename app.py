@@ -21,6 +21,10 @@ st.markdown("""
         background-color: #f9f9f9 !important;
         color: #000000 !important;
     }
+    .reloj-discreto {
+        font-size: 16px; font-weight: bold; color: #ff0000;
+        text-align: right; margin-bottom: 5px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -31,7 +35,6 @@ def obtener_fecha_cr():
 def cargar_datos(archivo, columnas):
     if os.path.exists(archivo):
         try:
-            # Forzamos lectura como string y eliminamos nulos para que no fallen los filtros
             df = pd.read_csv(archivo, dtype=str).fillna("")
             return df
         except:
@@ -67,6 +70,7 @@ if menu == "👥 Empleados":
                 if n and c:
                     df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre":n,"Correo":c}])], ignore_index=True)
                     guardar_datos(df_emp, "empleados.csv")
+                    st.success("Operario registrado.")
                     st.rerun()
     st.table(df_emp)
 
@@ -83,7 +87,6 @@ elif menu == "📝 Nueva OT":
             cp = st.text_input("Correo de copia")
             if st.form_submit_button("Generar Orden"):
                 if ds and cp:
-                    # Generar ID basado en el conteo real de la base de datos
                     id_ot = f"{len(df_ot) + 1:04d}"
                     nombre_foto = "Sin foto"
                     if archivo_foto:
@@ -100,57 +103,72 @@ elif menu == "📝 Nueva OT":
                     st.success(f"OT #{id_ot} guardada con éxito."); st.rerun()
 
 elif menu == "🔍 Cierre y Consulta":
+    st.markdown(f'<div class="reloj-discreto">Hora CR: {obtener_fecha_cr().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
     st.header("🔍 Gestión de Cierre y Consulta")
     tab1, tab2 = st.tabs(["Órdenes Activas", "Historial Completo"])
     
     with tab1:
-        # Aseguramos que el filtro capture tanto 'Abierta' como 'En Pausa'
+        # 1. Filtramos las órdenes que no están cerradas
         pendientes = df_ot[df_ot['Estado'].str.contains("Abierta|En Pausa", case=False, na=False)].copy()
         
         if pendientes.empty:
-            st.info("No hay órdenes pendientes en el sistema.")
+            st.info("No hay órdenes pendientes de cierre.")
         else:
-            # Lista desplegable para seleccionar la OT
+            # --- TABLA DE DETALLES RESTAURADA ---
+            st.subheader("📋 Resumen de Órdenes en Proceso")
+            st.dataframe(pendientes[["OT", "Estado", "Empleado", "Tipo", "Inicio", "Descripcion"]], use_container_width=True)
+            
+            st.divider()
+            
+            # 2. Selector para editar
             opciones = pendientes['OT'] + " | " + pendientes['Empleado'] + " | " + pendientes['Descripcion']
-            sel = st.selectbox("Seleccione Orden para Editar:", opciones)
+            sel = st.selectbox("Seleccione Orden para gestionar cierre:", opciones)
             id_sel = sel.split(" | ")[0]
             idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
 
-            # Mostrar foto si existe
-            foto_nom = str(df_ot.at[idx, 'Foto'])
-            if foto_nom != "Sin foto" and foto_nom != "":
-                ruta = os.path.join("fotos", foto_nom)
-                if os.path.exists(ruta):
-                    st.image(ruta, caption=f"Evidencia OT #{id_sel}", width=300)
+            # 3. Mostrar Foto y Formulario
+            col_foto, col_form = st.columns([1, 2])
+            
+            with col_foto:
+                foto_nom = str(df_ot.at[idx, 'Foto'])
+                if foto_nom != "Sin foto" and foto_nom != "":
+                    ruta = os.path.join("fotos", foto_nom)
+                    if os.path.exists(ruta):
+                        st.image(ruta, caption=f"Evidencia OT #{id_sel}")
+                    else:
+                        st.warning("Imagen no disponible")
+                else:
+                    st.info("Sin foto adjunta")
 
-            with st.form("form_cierre"):
-                nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], 
-                                         index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
-                coment = st.text_area("Comentarios de Trabajo", value=df_ot.at[idx, 'Comentarios'])
-                
-                if st.form_submit_button("Guardar Cambios"):
-                    df_ot.at[idx, 'Estado'] = nuevo_est
-                    df_ot.at[idx, 'Comentarios'] = coment
-                    if nuevo_est == "Cerrada":
-                        df_ot.at[idx, 'Fin'] = obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S")
-                    guardar_datos(df_ot, "ordenes.csv")
-                    st.success("Orden actualizada correctamente."); st.rerun()
+            with col_form:
+                with st.form("form_cierre"):
+                    nuevo_est = st.selectbox("Cambiar Estado", ["Abierta", "En Pausa", "Cerrada"], 
+                                             index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
+                    coment = st.text_area("Comentarios finales / Avances", value=df_ot.at[idx, 'Comentarios'])
+                    
+                    if st.form_submit_button("Actualizar y Guardar"):
+                        # Si se cierra, guardamos fecha fin
+                        if nuevo_est == "Cerrada":
+                            df_ot.at[idx, 'Fin'] = obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        df_ot.at[idx, 'Estado'] = nuevo_est
+                        df_ot.at[idx, 'Comentarios'] = coment
+                        guardar_datos(df_ot, "ordenes.csv")
+                        st.success("Cambios aplicados."); st.rerun()
 
     with tab2:
-        st.subheader("Todas las órdenes registradas")
+        st.subheader("📚 Historial de todas las OTs")
         st.dataframe(df_ot, use_container_width=True)
         
-        # Descarga de Excel
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
             df_ot.to_excel(writer, index=False)
-        st.download_button("📥 Descargar reporte.xlsx", buf.getvalue(), "reporte_mantenimiento.xlsx")
+        st.download_button("📥 Descargar Reporte Completo (Excel)", buf.getvalue(), "base_datos_roble.xlsx")
 
 elif menu == "📊 Dashboard":
-    st.header("📊 Análisis de Datos")
-    if df_ot.empty:
-        st.info("No hay datos para graficar.")
-    else:
+    st.header("📊 Dashboard de Rendimiento")
+    # ... (Sección Dashboard con filtros restaurada en el paso anterior) ...
+    if not df_ot.empty:
         df_d = df_ot.copy()
         df_d['Horas'] = pd.to_numeric(df_d['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
         st.plotly_chart(px.bar(df_d, x='OT', y='Horas', color='Tipo', title="Tiempo por OT"), use_container_width=True)
