@@ -1,4 +1,12 @@
-# 2. GESTIÓN DE EMPLEADOS (CON REGISTRO, MODIFICACIÓN Y ELIMINACIÓN)
+# --- MENÚ PRINCIPAL ---
+menu = st.sidebar.selectbox("MENÚ PRINCIPAL", ["Dashboard", "Gestión de Empleados", "Nueva Orden de Trabajo", "Cierre y Consulta de OT"])
+
+# 1. EL PRIMER BLOQUE DEBE SER "IF"
+if menu == "Dashboard":
+    st.header("📊 Dashboard de Rendimiento")
+    # ... (todo el código del dashboard)
+
+# 2. LOS SIGUIENTES DEBEN SER "ELIF" Y ESTAR ALINEADOS CON EL "IF"
 elif menu == "Gestión de Empleados":
     st.header("👥 Gestión de Operarios")
     
@@ -16,8 +24,6 @@ elif menu == "Gestión de Empleados":
                     guardar_datos(df_emp, "empleados.csv")
                     st.success(f"Registrado: {nom}")
                     st.rerun()
-                else:
-                    st.error("Llene todos los campos.")
 
     # --- COLUMNA 2: MODIFICAR ---
     with col_mod:
@@ -25,7 +31,6 @@ elif menu == "Gestión de Empleados":
         if not df_emp.empty:
             emp_a_editar = st.selectbox("Seleccione para editar:", df_emp['Nombre'], key="edit_select")
             idx_edit = df_emp.index[df_emp['Nombre'] == emp_a_editar].tolist()[0]
-            
             with st.form("editar_emp"):
                 nuevo_nom = st.text_input("Editar Nombre", value=df_emp.at[idx_edit, 'Nombre'])
                 nuevo_ema = st.text_input("Editar Correo", value=df_emp.at[idx_edit, 'Correo'])
@@ -35,28 +40,23 @@ elif menu == "Gestión de Empleados":
                     guardar_datos(df_emp, "empleados.csv")
                     st.success("Cambios guardados.")
                     st.rerun()
-        else:
-            st.info("No hay empleados.")
 
     # --- COLUMNA 3: ELIMINAR ---
     with col_del:
         st.subheader("Eliminar Operario")
         if not df_emp.empty:
             emp_a_eliminar = st.selectbox("Seleccione para borrar:", df_emp['Nombre'], key="del_select")
-            
-            # Botón de advertencia antes de borrar
-            if st.button("🗑️ Eliminar Definitivamente", type="secondary"):
-                # Filtrar el dataframe para quitar el nombre seleccionado
+            if st.button("🗑️ Eliminar Definitivamente"):
                 df_emp = df_emp[df_emp['Nombre'] != emp_a_eliminar]
                 guardar_datos(df_emp, "empleados.csv")
                 st.warning(f"Se ha eliminado a {emp_a_eliminar}")
                 st.rerun()
-        else:
-            st.info("Lista vacía.")
 
-    st.divider()
-    st.subheader("Lista Actual de Operarios")
-    if not df_emp.empty:
-        st.dataframe(df_emp, use_container_width=True)
-    else:
-        st.write("No hay operarios registrados en el sistema.")
+# 3. OTROS ELIF PARA LAS DEMÁS PESTAÑAS
+elif menu == "Nueva Orden de Trabajo":
+    st.header("📝 Apertura de OT")
+    # ... (código de nueva OT)
+
+elif menu == "Cierre y Consulta de OT":
+    st.header("🔍 Seguimiento de Órdenes")
+    # ... (código de cierre)
