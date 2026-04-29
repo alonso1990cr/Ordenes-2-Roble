@@ -43,21 +43,39 @@ menu = st.sidebar.selectbox(
 
 if menu == "👥 Empleados":
     st.header("👥 Gestión de Operarios")
-    with st.form("add_emp", clear_on_submit=True):
-        n = st.text_input("Nombre Completo")
-        c = st.text_input("Correo Electrónico")
-        if st.form_submit_button("Registrar"):
-            if n and c:
-                df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre":n,"Correo":c}])], ignore_index=True)
-                guardar_datos(df_emp, "empleados.csv")
-                st.success("Operario registrado.")
-                st.rerun()
-    st.table(df_emp)
+    tab_reg, tab_gest = st.tabs(["Registrar Nuevo", "Gestionar Existentes"])
+    
+    with tab_reg:
+        with st.form("add_emp", clear_on_submit=True):
+            n = st.text_input("Nombre Completo")
+            c = st.text_input("Correo Electrónico")
+            if st.form_submit_button("Registrar"):
+                if n and c:
+                    df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre":n,"Correo":c}])], ignore_index=True)
+                    guardar_datos(df_emp, "empleados.csv")
+                    st.success(f"Operario {n} registrado.")
+                    st.rerun()
+    
+    with tab_gest:
+        if df_emp.empty:
+            st.info("No hay empleados registrados.")
+        else:
+            st.write("### Lista de Personal")
+            # Opción para eliminar
+            emp_a_borrar = st.selectbox("Seleccione un operario para eliminar:", ["---"] + df_emp['Nombre'].tolist())
+            if emp_a_borrar != "---":
+                if st.button("Eliminar Operario"):
+                    df_emp = df_emp[df_emp['Nombre'] != emp_a_borrar]
+                    guardar_datos(df_emp, "empleados.csv")
+                    st.warning(f"Eliminado: {emp_a_borrar}")
+                    st.rerun()
+            st.divider()
+            st.table(df_emp)
 
 elif menu == "📝 Nueva OT":
     st.header("📝 Apertura de Orden de Trabajo")
     if df_emp.empty:
-        st.warning("Registre operarios primero.")
+        st.warning("Registre operarios primero en la sección de Empleados.")
     else:
         with st.form("f_ot", clear_on_submit=True):
             op = st.selectbox("Operario Asignado", df_emp['Nombre'])
@@ -119,7 +137,7 @@ elif menu == "🔍 Cierre y Consulta":
                 id_sel = sel.split(" | ")[0]
                 idx = df_ot.index[df_ot['OT'] == id_sel].tolist()[0]
                 
-                # REINTEGRO DE FOTO
+                # MOSTRAR FOTO SI EXISTE
                 foto_nom = str(df_ot.at[idx, 'Foto'])
                 if foto_nom != "Sin foto" and foto_nom != "":
                     ruta = os.path.join("fotos", foto_nom)
@@ -128,7 +146,7 @@ elif menu == "🔍 Cierre y Consulta":
 
                 with st.form("form_cierre", clear_on_submit=True):
                     nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
-                    coment = st.text_area("Avances", value=df_ot.at[idx, 'Comentarios'])
+                    coment = st.text_area("Avances / Comentarios Finales", value=df_ot.at[idx, 'Comentarios'])
                     if st.form_submit_button("Actualizar y Guardar"):
                         ahora_act = obtener_fecha_cr()
                         if df_ot.at[idx, 'Estado'] == "Abierta":
@@ -148,9 +166,9 @@ elif menu == "🔍 Cierre y Consulta":
 elif menu == "📊 Dashboard":
     st.header("📊 Dashboard de Rendimiento")
     if df_ot.empty:
-        st.info("No hay datos.")
+        st.info("No hay datos para mostrar.")
     else:
-        # REINTEGRO DE FILTROS
+        # FILTROS DE DASHBOARD RESTAURADOS
         st.sidebar.divider()
         st.sidebar.subheader("🎯 Filtros")
         df_ot['Inicio_dt'] = pd.to_datetime(df_ot['Inicio'], errors='coerce')
@@ -173,5 +191,5 @@ elif menu == "📊 Dashboard":
         c2.metric("Horas Totales", f"{df_f['Horas'].sum():.2f}")
         c3.metric("Cerradas", len(df_f[df_f['Estado'] == "Cerrada"]))
         
-        st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo', title="Horas por OT"), use_container_width=True)
+        st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo', title="Inversión de Horas por OT"), use_container_width=True)
         st.plotly_chart(px.pie(df_f, names='Estado', title="Distribución por Estado"), use_container_width=True)
