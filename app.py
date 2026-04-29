@@ -11,7 +11,7 @@ import io
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Gestión OT - Roble", layout="wide")
 UTC_OFFSET = 6 
-CORREO_COPIA = "sa.alterna@gmail.com"
+CORREO_ADMIN = "sa.alterna@gmail.com"
 
 # --- ESTILO PERSONALIZADO (RELLENO VERDE) ---
 st.markdown("""
@@ -46,30 +46,36 @@ def generar_siguiente_ot(df_ot):
     if df_ot.empty:
         return "0001"
     try:
-        # Intentamos obtener el último número y sumamos 1
         ultimo_num = int(df_ot['OT'].iloc[-1])
         nuevo_num = ultimo_num + 1
         return f"{nuevo_num:04d}"
     except:
-        # Si el formato anterior era fecha, reiniciamos a un número alto o 0001
         return "0001"
 
-def enviar_correo(destinatario, asunto, cuerpo):
+def enviar_correo(destinatario_op, correo_copia_extra, asunto, cuerpo):
     try:
+        # Los secrets deben estar configurados en Streamlit Cloud
         user = st.secrets["emails"]["sender_user"]
         password = st.secrets["emails"]["sender_password"]
+        
         msg = MIMEMultipart()
         msg['From'] = user
-        msg['To'] = f"{destinatario}, {CORREO_COPIA}"
+        # Lista de destinatarios: Operario, Admin y la Copia obligatoria
+        destinatarios = [destinatario_op, CORREO_ADMIN, correo_copia_extra]
+        msg['To'] = ", ".join(destinatarios)
         msg['Subject'] = asunto
+        
         msg.attach(MIMEText(cuerpo, 'plain'))
+        
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(user, password)
-        server.sendmail(user, [destinatario, CORREO_COPIA], msg.as_string())
+        server.sendmail(user, destinatarios, msg.as_string())
         server.quit()
         return True
-    except: return False
+    except Exception as e:
+        st.error(f"Error técnico al enviar correo: {e}")
+        return False
 
 def calcular_duracion_laboral(inicio, fin):
     total_segundos = 0
@@ -91,7 +97,8 @@ def calcular_duracion_laboral(inicio, fin):
 
 # --- CARGA DE DATOS ---
 df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
-df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios"])
+# Agregamos CorreoCopia a las columnas base
+df_ot = cargar_datos("ordenes.csv", ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios", "CorreoCopia"])
 
 # --- MENÚ PRINCIPAL ---
 menu = st.sidebar.selectbox(
@@ -144,7 +151,7 @@ if menu == "👥 Gestión de Empleados":
     st.divider()
     st.table(df_emp)
 
-# 2. NUEVA ORDEN DE TRABAJO (NUMERACIÓN 4 DÍGITOS)
+# 2. NUEVA ORDEN DE TRABAJO (CON ENVÍO DE CORREO)
 elif menu == "📝 Nueva Orden de Trabajo":
     st.header("📝 Apertura de OT")
     if df_emp.empty: 
@@ -153,21 +160,48 @@ elif menu == "📝 Nueva Orden de Trabajo":
         with st.form("nueva_ot", clear_on_submit=True):
             operario = st.selectbox("Operario", df_emp['Nombre'])
             tipo = st.radio("Tipo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
-            desc = st.text_area("Descripción")
+            desc = st.text_area("Descripción del hallazgo/trabajo")
+            # NUEVO: Correo de copia obligatorio
+            correo_copia_ot = st.text_input("Enviar copia obligatoria a (Email):", placeholder="ejemplo@dominio.com")
             
             if st.form_submit_button("Generar OT"):
-                if desc:
+                if desc and correo_copia_ot:
                     ahora = obtener_fecha_cr()
-                    # NUEVA LÓGICA: Número correlativo de 4 dígitos
                     num_ot = generar_siguiente_ot(df_ot)
+                    correo_operario = df_emp[df_emp['Nombre'] == operario]['Correo'].values[0]
                     
-                    nueva = {"OT": num_ot, "Empleado": operario, "Descripcion": desc, 
-                             "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
-                             "Estado": "Abierta", "Fin": "", "Comentarios": ""}
+                    nueva = {
+                        "OT": num_ot, "Empleado": operario, "Descripcion": desc, 
+                        "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
+                        "Estado": "Abierta", "Fin": "", "Comentarios": "",
+                        "CorreoCopia": correo_copia_ot
+                    }
+                    
+                    # 1. Guardar en Base de Datos
                     df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
                     guardar_datos(df_ot, "ordenes.csv")
-                    st.success(f"OT #{num_ot} creada con éxito.")
+                    
+                    # 2. Ejecutar envío de correo
+                    asunto = f"Nueva Orden de Trabajo #{num_ot} - {tipo}"
+                    cuerpo = f"""
+                    Se ha generado una nueva OT:
+                    Número: {num_ot}
+                    Operario: {operario}
+                    Tipo: {tipo}
+                    Fecha Inicio: {ahora.strftime('%d/%m/%Y %H:%M')}
+                    Descripción: {desc}
+                    
+                    Este es un correo automático de Gestión OT Roble.
+                    """
+                    
+                    if enviar_correo(correo_operario, correo_copia_ot, asunto, cuerpo):
+                        st.success(f"OT #{num_ot} creada y correos enviados correctamente.")
+                    else:
+                        st.warning(f"OT #{num_ot} creada, pero hubo un problema al enviar los correos.")
+                    
                     st.rerun()
+                else:
+                    st.error("Por favor complete la descripción y el correo de copia.")
 
 # 3. CIERRE Y CONSULTA
 elif menu == "🔍 Cierre y Consulta de OT":
@@ -181,13 +215,12 @@ elif menu == "🔍 Cierre y Consulta de OT":
         else:
             st.dataframe(abiertas, use_container_width=True)
             abiertas['Seleccion'] = abiertas['OT'] + " | " + abiertas['Descripcion']
-            opcion_sel = st.selectbox("Seleccione ID y Descripción para cerrar:", abiertas['Seleccion'])
+            opcion_sel = st.selectbox("Seleccione ID para cerrar:", abiertas['Seleccion'])
             ot_id_sel = opcion_sel.split(" | ")[0]
-            desc_sel = opcion_sel.split(" | ")[1]
-            idx_ot = df_ot.index[(df_ot['OT'] == ot_id_sel) & (df_ot['Descripcion'] == desc_sel)].tolist()[0]
+            idx_ot = df_ot.index[df_ot['OT'] == ot_id_sel].tolist()[0]
             
             with st.form("form_cierre"):
-                coment = st.text_area("Comentarios", value=df_ot.at[idx_ot, 'Comentarios'])
+                coment = st.text_area("Comentarios finales", value=df_ot.at[idx_ot, 'Comentarios'])
                 accion = st.selectbox("Estado", ["Abierta", "Cerrada"])
                 if st.form_submit_button("Confirmar Cambios"):
                     df_ot.at[idx_ot, 'Comentarios'] = coment
@@ -219,7 +252,6 @@ elif menu == "📊 Dashboard":
     if df_ot.empty: 
         st.info("No hay datos registrados aún.")
     else:
-        # Lógica de Excel Protegido
         buffer = io.BytesIO()
         try:
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
@@ -229,7 +261,7 @@ elif menu == "📊 Dashboard":
                 worksheet.protect('Roble2026') 
             
             st.sidebar.download_button(
-                label="📥 Descargar Reporte Excel (Protegido)",
+                label="📥 Descargar Reporte Excel (Solo Lectura)",
                 data=buffer.getvalue(),
                 file_name=f"Reporte_Mantenimiento_{obtener_fecha_cr().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -237,7 +269,6 @@ elif menu == "📊 Dashboard":
         except:
             st.sidebar.warning("Nota: xlsxwriter no detectado.")
 
-        # Filtros
         df_dash = df_ot.copy()
         df_dash['Inicio'] = pd.to_datetime(df_dash['Inicio'])
         df_dash['Fin'] = pd.to_datetime(df_dash['Fin'], errors='coerce')
@@ -253,7 +284,6 @@ elif menu == "📊 Dashboard":
         f_emp = st.sidebar.selectbox("Por Operario:", ["TODOS"] + list(df_emp['Nombre'].unique()))
         f_tipo = st.sidebar.selectbox("Por Tipo de OT:", ["TODOS", "Preventivo", "Correctivo", "Casos 24h", "Casos ISO"])
         
-        # Manejo de fecha mínima para evitar errores si no hay datos
         fecha_min = df_dash['Inicio'].min().date() if not df_dash.empty else obtener_fecha_cr().date()
         f_ini = st.sidebar.date_input("Desde", fecha_min)
         f_fin = st.sidebar.date_input("Hasta", obtener_fecha_cr().date())
@@ -270,7 +300,6 @@ elif menu == "📊 Dashboard":
         c3.metric("Promedio Horas", f"{df_f[df_f['Horas']>0]['Horas'].mean():.2f}" if not df_f[df_f['Horas']>0].empty else "0")
 
         if not df_f.empty:
-            # El eje X ahora mostrará números como 0001, 0002, mucho más limpio
             fig = px.bar(df_f, x='OT', y='Horas', color='Tipo', 
                          hover_data=['Empleado', 'Descripcion'],
                          title=f"Horas Laboradas (Filtro: {f_tipo})")
