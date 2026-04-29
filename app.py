@@ -14,18 +14,24 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="Gestión OT - Roble", layout="wide")
 UTC_OFFSET = 6 # Costa Rica
 
-# Refresco silencioso cada 1 segundo para el reloj
+# Refresco silencioso cada 1 segundo
 st_autorefresh(interval=1000, key="daterefresh")
 
 if not os.path.exists("fotos"):
     os.makedirs("fotos")
+
+# --- CONFIGURACIÓN DE CORREO (SMTP) ---
+# Asegúrate de usar una "Contraseña de Aplicación" de Google si tienes 2FA activo
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+SENDER_EMAIL = "tu-correo@gmail.com" 
+SENDER_PASSWORD = "tu-clave-de-16-letras" 
 
 # --- FUNCIONES DE APOYO ---
 def obtener_fecha_cr():
     return datetime.utcnow() - timedelta(hours=UTC_OFFSET)
 
 def mostrar_reloj_discreto():
-    """Muestra la hora en rojo, pequeña y alineada a la derecha."""
     hora_actual = obtener_fecha_cr().strftime("%d/%m/%Y %H:%M:%S")
     st.markdown(
         f"""
@@ -38,6 +44,30 @@ def mostrar_reloj_discreto():
         unsafe_allow_html=True
     )
 
+def enviar_notificacion(destinatarios, asunto, cuerpo):
+    """Función robusta para envío de correos."""
+    try:
+        # Filtrar correos vacíos o inválidos
+        destinos_validos = [d.strip() for d in destinatarios if d and "@" in d]
+        if not destinos_validos:
+            return False
+            
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = ", ".join(destinos_validos)
+        msg['Subject'] = asunto
+        msg.attach(MIMEText(cuerpo, 'plain'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, destinos_validos, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Error al enviar correo: {e}")
+        return False
+
 def cargar_datos(archivo, columnas):
     if os.path.exists(archivo):
         try:
@@ -49,17 +79,11 @@ def cargar_datos(archivo, columnas):
 def guardar_datos(df, archivo):
     df.to_csv(archivo, index=False)
 
-def estilo_estados(val):
-    if val == 'Abierta': return 'color: green; font-weight: bold'
-    if val == 'En Pausa': return 'color: orange; font-weight: bold'
-    if val == 'Cerrada': return 'color: red; font-weight: bold'
-    return ''
-
 def generar_excel_protegido(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Historial_OT')
-        workbook  = writer.book
+        workbook = writer.book
         worksheet = writer.sheets['Historial_OT']
         worksheet.protect('Roble2026', {'autofilter': True})
     return output.getvalue()
@@ -77,7 +101,6 @@ menu = st.sidebar.selectbox("Seleccione sección:", ["👥 Empleados", "📝 Nue
 if menu == "👥 Empleados":
     st.header("👥 Gestión de Personal")
     mostrar_reloj_discreto()
-    
     t1, t2, t3 = st.tabs(["➕ Registrar", "✏️ Modificar", "🗑️ Eliminar"])
     
     with t1:
@@ -97,21 +120,17 @@ if menu == "👥 Empleados":
             with st.form("edit_emp"):
                 new_n = st.text_input("Nombre", value=df_emp.at[idx_m, 'Nombre'])
                 new_c = st.text_input("Correo", value=df_emp.at[idx_m, 'Correo'])
-                if st.form_submit_button("Actualizar Datos"):
+                if st.form_submit_button("Actualizar"):
                     df_emp.at[idx_m, 'Nombre'], df_emp.at[idx_m, 'Correo'] = new_n, new_c
                     guardar_datos(df_emp, "empleados.csv")
-                    st.success("Datos actualizados"); st.rerun()
+                    st.success("Actualizado"); st.rerun()
 
     with t3:
         if not df_emp.empty:
-            borrar = st.selectbox("Seleccione empleado a eliminar:", df_emp['Nombre'])
-            conf = st.checkbox(f"Confirmo que deseo eliminar a {borrar}")
-            if st.button("Eliminar Permanentemente") and conf:
+            borrar = st.selectbox("Seleccione empleado:", df_emp['Nombre'])
+            if st.button("Eliminar") and st.checkbox("Confirmar"):
                 df_emp = df_emp[df_emp['Nombre'] != borrar]
-                guardar_datos(df_emp, "empleados.csv")
-                st.warning("Empleado eliminado"); st.rerun()
-    
-    st.subheader("Lista de Personal Activo")
+                guardar_datos(df_emp, "empleados.csv"); st.rerun()
     st.table(df_emp)
 
 # --- SECCIÓN: NUEVA OT ---
@@ -119,17 +138,20 @@ elif menu == "📝 Nueva OT":
     st.header("📝 Apertura de Orden de Trabajo")
     mostrar_reloj_discreto()
     if df_emp.empty:
-        st.warning("Debe registrar personal en la sección de Empleados primero.")
+        st.warning("Registre personal primero.")
     else:
         with st.form("f_ot", clear_on_submit=True):
             op = st.selectbox("Operario Asignado", df_emp['Nombre'])
-            tp = st.radio("Tipo de Trabajo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
-            ds = st.text_area("Descripción del Hallazgo")
-            foto = st.file_uploader("Adjuntar Foto (Opcional)", type=["jpg", "png", "jpeg"])
-            cp = st.text_input("Correo para copia adicional")
+            tp = st.radio("Tipo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
+            ds = st.text_area("Descripción")
+            foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
+            cp = st.text_input("Correo adicional para copia")
             
-            if st.form_submit_button("Generar Orden de Trabajo"):
+            if st.form_submit_button("Generar Orden"):
                 id_ot = f"{len(df_ot) + 1:04d}"
+                # Obtener correo del operario seleccionado
+                correo_op = df_emp[df_emp['Nombre'] == op]['Correo'].values[0]
+                
                 nom_foto = f"OT_{id_ot}.jpg" if foto else "Sin foto"
                 if foto:
                     with open(os.path.join("fotos", nom_foto), "wb") as f: f.write(foto.getbuffer())
@@ -139,7 +161,13 @@ elif menu == "📝 Nueva OT":
                 
                 df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
                 guardar_datos(df_ot, "ordenes.csv")
-                st.success(f"OT #{id_ot} creada con éxito."); st.rerun()
+                
+                # ENVÍO DE CORREO AL APERTURAR
+                lista_correos = ["sa.alterna@gmail.com", correo_op, cp]
+                cuerpo = f"Se ha generado la OT #{id_ot}\nOperario: {op}\nTipo: {tp}\nDescripción: {ds}"
+                enviar_notificacion(lista_correos, f"Apertura OT #{id_ot}", cuerpo)
+                
+                st.success(f"OT #{id_ot} generada y correos enviados."); st.rerun()
 
 # --- SECCIÓN: CIERRE Y CONSULTA ---
 elif menu == "🔍 Cierre y Consulta":
@@ -150,62 +178,45 @@ elif menu == "🔍 Cierre y Consulta":
     with tab1:
         pendientes = df_ot[df_ot['Estado'].isin(["Abierta", "En Pausa"])].copy()
         if not pendientes.empty:
-            st.dataframe(pendientes[["OT", "Estado", "Empleado", "Tipo", "Descripcion"]].style.map(estilo_estados, subset=['Estado']), use_container_width=True, hide_index=True)
-            
             sel = st.selectbox("Seleccionar OT:", ["---"] + (pendientes['OT'] + " | " + pendientes['Empleado']).tolist())
             if sel != "---":
                 idx = df_ot.index[df_ot['OT'] == sel.split(" | ")[0]].tolist()[0]
-                
-                # Imagen
-                f_nom = df_ot.at[idx, 'Foto']
-                if f_nom != "Sin foto" and os.path.exists(os.path.join("fotos", f_nom)):
-                    st.image(os.path.join("fotos", f_nom), width=300, caption="Evidencia Inicial")
+                if df_ot.at[idx, 'Foto'] != "Sin foto":
+                    st.image(os.path.join("fotos", df_ot.at[idx, 'Foto']), width=300)
                 
                 with st.form("gestion_ot"):
                     nuevo_est = st.selectbox("Estado", ["Abierta", "En Pausa", "Cerrada"], index=["Abierta", "En Pausa", "Cerrada"].index(df_ot.at[idx, 'Estado']))
-                    nuevo_com = st.text_area("Comentarios / Avances", value=df_ot.at[idx, 'Comentarios'])
+                    nuevo_com = st.text_area("Comentarios", value=df_ot.at[idx, 'Comentarios'])
                     if st.form_submit_button("Actualizar OT"):
                         df_ot.at[idx, 'Estado'], df_ot.at[idx, 'Comentarios'] = nuevo_est, nuevo_com
+                        
                         if nuevo_est == "Cerrada":
                             df_ot.at[idx, 'Fin'] = obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S")
+                            # Obtener correos para notificación de cierre
+                            op_nombre = df_ot.at[idx, 'Empleado']
+                            correo_op = df_emp[df_emp['Nombre'] == op_nombre]['Correo'].values[0]
+                            correo_cp = df_ot.at[idx, 'CorreoCopia']
+                            
+                            lista_cierre = ["sa.alterna@gmail.com", correo_op, correo_cp]
+                            cuerpo_cierre = f"Cierre de OT #{df_ot.at[idx, 'OT']}\nOperario: {op_nombre}\nResolución: {nuevo_com}"
+                            enviar_notificacion(lista_cierre, f"Cierre OT #{df_ot.at[idx, 'OT']}", cuerpo_cierre)
+                        
                         guardar_datos(df_ot, "ordenes.csv"); st.rerun()
 
     with tab2:
-        st.dataframe(df_ot.style.map(estilo_estados, subset=['Estado']), use_container_width=True)
+        st.dataframe(df_ot, use_container_width=True)
         if not df_ot.empty:
-            st.download_button("📥 Exportar Historial (Excel)", generar_excel_protegido(df_ot), "Historial_OT_Roble.xlsx")
+            st.download_button("📥 Descargar Excel", generar_excel_protegido(df_ot), "Reporte_OT.xlsx")
 
 # --- SECCIÓN: DASHBOARD ---
 elif menu == "📊 Dashboard":
-    st.header("📊 Dashboard de Rendimiento")
+    st.header("📊 Dashboard")
     mostrar_reloj_discreto()
-    
     if not df_ot.empty:
-        st.sidebar.divider()
-        st.sidebar.subheader("🎯 Filtros")
-        
-        df_ot['Inicio_dt'] = pd.to_datetime(df_ot['Inicio'], errors='coerce')
-        f_min = df_ot['Inicio_dt'].min().date() if not df_ot['Inicio_dt'].dropna().empty else obtener_fecha_cr().date()
-        
-        rango = st.sidebar.date_input("Periodo", [f_min, obtener_fecha_cr().date()])
-        op_sel = st.sidebar.selectbox("Operario", ["Todos"] + sorted(df_ot['Empleado'].unique().tolist()))
-        tp_sel = st.sidebar.selectbox("Tipo de Trabajo", ["Todos"] + sorted(df_ot['Tipo'].unique().tolist()))
-
-        # Filtrado
+        # Filtros básicos para el dashboard
+        op_sel = st.sidebar.selectbox("Filtrar Operario", ["Todos"] + sorted(df_ot['Empleado'].unique().tolist()))
         df_f = df_ot.copy()
-        if len(rango) == 2:
-            df_f = df_f[(df_f['Inicio_dt'].dt.date >= rango[0]) & (df_f['Inicio_dt'].dt.date <= rango[1])]
         if op_sel != "Todos": df_f = df_f[df_f['Empleado'] == op_sel]
-        if tp_sel != "Todos": df_f = df_f[df_f['Tipo'] == tp_sel]
-
-        # Métricas y Gráficos
-        df_f['Horas'] = pd.to_numeric(df_f['TiempoAcumulado'], errors='coerce').fillna(0) / 3600
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total OT", len(df_f))
-        c2.metric("Horas Invertidas", f"{df_f['Horas'].sum():.2f}")
-        c3.metric("Completadas", len(df_f[df_f['Estado'] == "Cerrada"]))
         
-        st.plotly_chart(px.bar(df_f, x='OT', y='Horas', color='Tipo', barmode='group'), use_container_width=True)
-        st.plotly_chart(px.pie(df_f, names='Estado', hole=0.4), use_container_width=True)
-    else:
-        st.info("Sin datos para procesar el Dashboard.")
+        st.metric("Total de Órdenes", len(df_f))
+        st.plotly_chart(px.pie(df_f, names='Estado', title="Distribución por Estado"), use_container_width=True)
