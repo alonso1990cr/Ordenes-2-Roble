@@ -103,104 +103,117 @@ if menu == "Dashboard":
         fig = px.bar(df_f, x='OT', y='Horas', color='Empleado', title="Horas Laboradas por Orden")
         st.plotly_chart(fig, use_container_width=True)
 
-# 2. GESTIÓN DE EMPLEADOS (CON MODIFICACIÓN)
+# 2. GESTIÓN DE EMPLEADOS (COMPLETA)
 elif menu == "Gestión de Empleados":
-    st.header("👥 Registro y Modificación de Operarios")
+    st.header("👥 Gestión de Operarios")
     
-    opcion_emp = st.radio("Acción:", ["Registrar Nuevo", "Modificar Existente"])
+    col_reg, col_mod = st.columns(2)
     
-    if opcion_emp == "Registrar Nuevo":
-        with st.form("nuevo_emp"):
+    with col_reg:
+        st.subheader("Registrar Nuevo")
+        with st.form("nuevo_emp", clear_on_submit=True):
             nom = st.text_input("Nombre Completo")
-            ema = st.text_input("Correo")
-            if st.form_submit_button("Guardar"):
+            ema = st.text_input("Correo Electrónico")
+            if st.form_submit_button("Añadir Operario"):
                 if nom and ema:
                     df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre": nom, "Correo": ema}])], ignore_index=True)
                     guardar_datos(df_emp, "empleados.csv")
-                    st.success("Empleado registrado.")
+                    st.success(f"Registrado: {nom}")
                     st.rerun()
+                else:
+                    st.error("Llene todos los campos.")
 
-    else:
+    with col_mod:
+        st.subheader("Modificar Existente")
         if not df_emp.empty:
-            emp_sel = st.selectbox("Seleccione Empleado para editar:", df_emp['Nombre'])
-            idx = df_emp.index[df_emp['Nombre'] == emp_sel].tolist()[0]
-            with st.form("edit_emp"):
-                nuevo_nom = st.text_input("Nombre", value=df_emp.at[idx, 'Nombre'])
-                nuevo_ema = st.text_input("Correo", value=df_emp.at[idx, 'Correo'])
-                if st.form_submit_button("Actualizar"):
+            emp_a_editar = st.selectbox("Seleccione para editar:", df_emp['Nombre'])
+            idx = df_emp.index[df_emp['Nombre'] == emp_a_editar].tolist()[0]
+            
+            with st.form("editar_emp"):
+                nuevo_nom = st.text_input("Editar Nombre", value=df_emp.at[idx, 'Nombre'])
+                nuevo_ema = st.text_input("Editar Correo", value=df_emp.at[idx, 'Correo'])
+                if st.form_submit_button("Actualizar Datos"):
                     df_emp.at[idx, 'Nombre'] = nuevo_nom
                     df_emp.at[idx, 'Correo'] = nuevo_ema
                     guardar_datos(df_emp, "empleados.csv")
-                    st.success("Datos actualizados.")
+                    st.success("Cambios guardados con éxito.")
                     st.rerun()
-        else: st.warning("No hay empleados para modificar.")
+        else:
+            st.info("No hay empleados registrados para modificar.")
+
+    st.divider()
+    st.subheader("Lista Actual de Operarios")
+    st.table(df_emp)
 
 # 3. NUEVA ORDEN DE TRABAJO
 elif menu == "Nueva Orden de Trabajo":
     st.header("📝 Apertura de OT")
-    if df_emp.empty: st.warning("Registre empleados primero.")
+    if df_emp.empty: 
+        st.warning("Debe registrar al menos un empleado antes de abrir una OT.")
     else:
         with st.form("nueva_ot"):
-            operario = st.selectbox("Operario", df_emp['Nombre'])
-            tipo = st.radio("Tipo", ["Preventivo", "Correctivo"])
-            desc = st.text_area("Descripción")
-            if st.form_submit_button("Abrir Orden"):
+            operario = st.selectbox("Seleccionar Operario", df_emp['Nombre'])
+            tipo = st.radio("Tipo de Mantenimiento", ["Preventivo", "Correctivo"])
+            desc = st.text_area("Descripción de la falla/tarea")
+            if st.form_submit_button("Generar OT"):
                 ahora = obtener_fecha_cr()
-                num = ahora.strftime("%Y%m%d-%H%M")
-                nueva = {"OT": num, "Empleado": operario, "Descripcion": desc, 
-                         "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
-                         "Estado": "Abierta", "Fin": "", "Comentarios": ""}
-                df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True).astype(str)
+                num_ot = ahora.strftime("%Y%m%d-%H%M")
+                nueva_linea = {"OT": num_ot, "Empleado": operario, "Descripcion": desc, 
+                               "Inicio": ahora.strftime("%Y-%m-%d %H:%M:%S"), "Tipo": tipo, 
+                               "Estado": "Abierta", "Fin": "", "Comentarios": ""}
+                df_ot = pd.concat([df_ot, pd.DataFrame([nueva_linea])], ignore_index=True)
                 guardar_datos(df_ot, "ordenes.csv")
                 
-                # Correo de apertura
-                ema_dest = df_emp[df_emp['Nombre'] == operario]['Correo'].values[0]
-                enviar_correo(ema_dest, f"Apertura OT #{num}", f"OT abierta para: {desc}")
-                st.success(f"OT #{num} abierta.")
+                correo_op = df_emp[df_emp['Nombre'] == operario]['Correo'].values[0]
+                enviar_correo(correo_op, f"Nueva OT Asignada: #{num_ot}", f"Se ha abierto una OT para: {desc}")
+                st.success(f"OT #{num_ot} creada y notificada.")
 
-# 4. CIERRE Y CONSULTA (SEPARADO Y MODIFICABLE)
+# 4. CIERRE Y CONSULTA (CON PESTAÑAS SEPARADAS)
 elif menu == "Cierre y Consulta de OT":
     st.header("🔍 Seguimiento de Órdenes")
+    t_abiertas, t_cerradas = st.tabs(["Órdenes en Proceso", "Historial de Cerradas"])
     
-    tab1, tab2 = st.tabs(["📂 Órdenes ABIERTAS", "✅ Órdenes CERRADAS"])
-    
-    with tab1:
+    with t_abiertas:
         abiertas = df_ot[df_ot['Estado'] == "Abierta"]
-        if abiertas.empty: st.info("No hay órdenes abiertas.")
+        if abiertas.empty: 
+            st.info("No hay órdenes de trabajo abiertas.")
         else:
             st.dataframe(abiertas, use_container_width=True)
-            ot_sel = st.selectbox("Seleccione ID para cerrar o modificar:", abiertas['OT'])
-            idx_ot = df_ot.index[df_ot['OT'] == ot_sel].tolist()[0]
-            with st.form("cierre_ot"):
-                coment = st.text_area("Comentarios", value=df_ot.at[idx_ot, 'Comentarios'])
-                est = st.selectbox("Estado", ["Abierta", "Cerrada"])
-                if st.form_submit_button("Guardar Cambios"):
-                    df_ot.at[idx_ot, 'Comentarios'] = coment
-                    df_ot.at[idx_ot, 'Estado'] = est
-                    if est == "Cerrada":
-                        fin = obtener_fecha_cr()
-                        df_ot.at[idx_ot, 'Fin'] = fin.strftime("%Y-%m-%d %H:%M:%S")
+            st.subheader("Gestionar Cierre")
+            ot_id = st.selectbox("Seleccione ID de OT para cerrar:", abiertas['OT'])
+            idx_ot = df_ot.index[df_ot['OT'] == ot_id].tolist()[0]
+            
+            with st.form("form_cierre"):
+                comentarios = st.text_area("Hallazgos / Comentarios finales", value=df_ot.at[idx_ot, 'Comentarios'])
+                accion = st.selectbox("Cambiar estado a:", ["Abierta", "Cerrada"])
+                if st.form_submit_button("Confirmar Cambios"):
+                    df_ot.at[idx_ot, 'Comentarios'] = comentarios
+                    df_ot.at[idx_ot, 'Estado'] = accion
+                    if accion == "Cerrada":
+                        fecha_fin = obtener_fecha_cr()
+                        df_ot.at[idx_ot, 'Fin'] = fecha_fin.strftime("%Y-%m-%d %H:%M:%S")
                         
-                        # Cálculo duración
-                        ini_dt = datetime.strptime(df_ot.at[idx_ot, 'Inicio'], "%Y-%m-%d %H:%M:%S")
-                        dur = calcular_duracion_laboral(ini_dt, fin)
+                        # Cálculo de duración laboral
+                        f_ini = datetime.strptime(df_ot.at[idx_ot, 'Inicio'], "%Y-%m-%d %H:%M:%S")
+                        duracion = calcular_duracion_laboral(f_ini, fecha_fin)
                         
-                        # Correo
-                        ema_dest = df_emp[df_emp['Nombre'] == df_ot.at[idx_ot, 'Empleado']]['Correo'].values[0]
-                        enviar_correo(ema_dest, f"Cierre OT #{ot_sel}", f"Cerrada. Duración: {dur}")
+                        correo_op = df_emp[df_emp['Nombre'] == df_ot.at[idx_ot, 'Empleado']]['Correo'].values[0]
+                        enviar_correo(correo_op, f"OT #{ot_id} Cerrada", f"La orden ha sido cerrada con éxito. Duración efectiva: {duracion}")
                     
                     guardar_datos(df_ot, "ordenes.csv")
-                    st.success("Registro actualizado.")
+                    st.success("Orden actualizada correctamente.")
                     st.rerun()
 
-    with tab2:
-        cerradas = df_ot[df_ot['Estado'] == "Cerrada"]
-        if cerradas.empty: st.info("No hay órdenes cerradas.")
+    with t_cerradas:
+        cerradas = df_ot[df_ot['Estado'] == "Cerrada"].copy()
+        if cerradas.empty:
+            st.info("No hay historial de órdenes cerradas.")
         else:
-            # Calcular duración para la vista de cerradas
-            def vista_dur(row):
-                i = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
-                f = datetime.strptime(row['Fin'], "%Y-%m-%d %H:%M:%S")
-                return str(calcular_duracion_laboral(i, f))
-            cerradas['Duración'] = cerradas.apply(vista_dur, axis=1)
+            # Calcular duración visual para la tabla
+            def calc_dur_str(row):
+                ini = datetime.strptime(row['Inicio'], "%Y-%m-%d %H:%M:%S")
+                fin = datetime.strptime(row['Fin'], "%Y-%m-%d %H:%M:%S")
+                return str(calcular_duracion_laboral(ini, fin))
+            
+            cerradas['Duración Laboral'] = cerradas.apply(calc_dur_str, axis=1)
             st.dataframe(cerradas, use_container_width=True)
