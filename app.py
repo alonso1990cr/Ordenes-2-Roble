@@ -6,13 +6,13 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- CONFIGURACIÓN DE CORREO ---
+# ---------------- CONFIG CORREO ----------------
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "tu-correo@gmail.com"
 SENDER_PASSWORD = "abcd efgh ijkl mnop"  # contraseña de aplicación
 
-# --- FUNCIONES AUXILIARES ---
+# ---------------- FUNCIONES ----------------
 def obtener_fecha_cr():
     return datetime.now()
 
@@ -25,61 +25,66 @@ def cargar_datos(archivo, columnas):
     else:
         return pd.DataFrame(columns=columnas)
 
-# --- FUNCIÓN DE ENVÍO DE CORREO ---
 def enviar_notificacion(destinatarios, asunto, cuerpo):
     try:
-        destinos_limpios = [str(d).strip() for d in destinatarios if d and isinstance(d, str) and "@" in d]
-        
-        if not destinos_limpios:
+        destinos = [str(d).strip() for d in destinatarios if d and "@" in str(d)]
+
+        if not destinos:
             return False
 
         msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = ", ".join(destinos_limpios)
-        msg['Subject'] = asunto
-        msg.attach(MIMEText(cuerpo, 'plain'))
-        
+        msg["From"] = SENDER_EMAIL
+        msg["To"] = ", ".join(destinos)
+        msg["Subject"] = asunto
+        msg.attach(MIMEText(cuerpo, "plain"))
+
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, destinos_limpios, msg.as_string())
+        server.sendmail(SENDER_EMAIL, destinos, msg.as_string())
         server.quit()
+
         return True
 
     except Exception as e:
-        st.error(f"Error técnico de envío: {e}")
+        st.error(f"Error enviando correo: {e}")
         return False
 
-# --- CARGAR DATOS ---
-df_ot = cargar_datos("ordenes.csv", ["OT","Empleado","Descripcion","Inicio","Tipo","Estado","Fin","Comentarios","CorreoCopia","TiempoAcumulado","Foto"])
-df_emp = cargar_datos("empleados.csv", ["Nombre","Correo"])
+# ---------------- CARGA DE DATOS ----------------
+df_ot = cargar_datos(
+    "ordenes.csv",
+    ["OT","Empleado","Descripcion","Inicio","Tipo","Estado","Fin","Comentarios","CorreoCopia","TiempoAcumulado","Foto"]
+)
 
+df_emp = cargar_datos(
+    "empleados.csv",
+    ["Nombre","Correo"]
+)
+
+# ---------------- UI ----------------
 st.title("Sistema de Órdenes de Trabajo")
 
-# --- FORMULARIO ---
+# ---------------- FORMULARIO CORRECTO ----------------
 with st.form("form_orden"):
 
     st.subheader("Nueva Orden de Trabajo")
 
-    # Inputs
     op = st.selectbox("Operario", df_emp["Nombre"] if not df_emp.empty else [])
     ds = st.text_area("Descripción")
     tp = st.selectbox("Tipo", ["Correctivo", "Preventivo", "Emergencia"])
-    cp = st.text_input("Correo adicional (copia)")
+    cp = st.text_input("Correo copia")
 
     submitted = st.form_submit_button("Generar Orden")
 
     if submitted:
 
         if not op or not ds:
-            st.warning("Debe completar los campos obligatorios.")
+            st.warning("Complete los campos obligatorios")
         else:
             id_ot = f"{len(df_ot) + 1:04d}"
-            
-            datos_op = df_emp[df_emp['Nombre'] == op]
-            correo_operario = datos_op['Correo'].values[0] if not datos_op.empty else ""
-            
-            correo_extra = cp.strip()
+
+            datos_op = df_emp[df_emp["Nombre"] == op]
+            correo_operario = datos_op["Correo"].values[0] if not datos_op.empty else ""
 
             nueva = {
                 "OT": id_ot,
@@ -90,36 +95,37 @@ with st.form("form_orden"):
                 "Estado": "Abierta",
                 "Fin": "",
                 "Comentarios": "",
-                "CorreoCopia": correo_extra,
+                "CorreoCopia": cp,
                 "TiempoAcumulado": "0",
-                "Foto": "..."
+                "Foto": ""
             }
 
             df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
             guardar_datos(df_ot, "ordenes.csv")
 
-            destinatarios = ["sa.alterna@gmail.com", correo_operario, correo_extra]
-            asunto = f"Apertura de OT #{id_ot} - {op}"
+            destinatarios = ["sa.alterna@gmail.com", correo_operario, cp]
+
+            asunto = f"Apertura OT #{id_ot}"
 
             cuerpo = f"""
-Se ha generado una nueva Orden de Trabajo:
+Nueva Orden de Trabajo
 
-OT #: {id_ot}
+OT: {id_ot}
 Operario: {op}
 Tipo: {tp}
 Descripción: {ds}
-Fecha: {obtener_fecha_cr().strftime('%d/%m/%Y %H:%M:%S')}
+Fecha: {obtener_fecha_cr().strftime('%d/%m/%Y %H:%M')}
 """
 
             exito = enviar_notificacion(destinatarios, asunto, cuerpo)
 
             if exito:
-                st.success(f"OT #{id_ot} guardada y correos enviados correctamente.")
+                st.success("Orden creada y correo enviado")
             else:
-                st.warning(f"OT #{id_ot} guardada, pero hubo un problema al enviar los correos.")
+                st.warning("Orden creada, pero fallo el correo")
 
             st.rerun()
 
-# --- MOSTRAR DATOS ---
+# ---------------- TABLA ----------------
 st.subheader("Órdenes registradas")
 st.dataframe(df_ot)
