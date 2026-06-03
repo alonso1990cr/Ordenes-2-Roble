@@ -142,7 +142,7 @@ elif menu == "📝 Nueva OT":
     else:
         with st.form("f_ot", clear_on_submit=True):
             op = st.selectbox("Operario Asignado", df_emp['Nombre'])
-            tp = st.radio("Tipo", ["Preventivo", "Correctivo", "Casos 24h", "Casos ISO"], horizontal=True)
+            tp = st.radio("Tipo", ["Preventivo", "Correctivo", "SNC alta", "SNC media","SNC baja"], horizontal=True)
             ds = st.text_area("Descripción")
             foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
             cp = st.text_input("Correo adicional para copia")
