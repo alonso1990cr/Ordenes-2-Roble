@@ -11,7 +11,7 @@ import io
 from streamlit_autorefresh import st_autorefresh
 
 # --- CONFIGURACIÓN GENERAL ---
-st.set_page_config(page_title="Gestión OT - Roble", layout="wide")
+st.set_page_config(page_title="Mantenimiento Roble", layout="wide")
 UTC_OFFSET = 6 # Costa Rica
 
 # Refresco silencioso cada 1 segundo
