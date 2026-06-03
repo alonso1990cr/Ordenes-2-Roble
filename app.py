@@ -24,8 +24,9 @@ if not os.path.exists("fotos"):
 # Asegúrate de usar una "Contraseña de Aplicación" de Google si tienes 2FA activo
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SENDER_EMAIL = "tu-correo@gmail.com" 
-SENDER_PASSWORD = "tu-clave-de-16-letras" 
+SENDER_EMAIL = "ugaldeviquezalonso@gmail.com" 
+SENDER_PASSWORD = "krqixpnrwxuazwfz
+" 
 
 # --- FUNCIONES DE APOYO ---
 def obtener_fecha_cr():
