@@ -25,8 +25,7 @@ if not os.path.exists("fotos"):
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "ugaldeviquezalonso@gmail.com" 
-SENDER_PASSWORD = "krqixpnrwxuazwfz
-" 
+SENDER_PASSWORD = "krqi xpnr wxua zwfz" 
 
 # --- FUNCIONES DE APOYO ---
 def obtener_fecha_cr():
