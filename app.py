@@ -1,113 +1,3 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
-import os
-import plotly.express as px
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import io
-from streamlit_autorefresh import st_autorefresh
-
-# =========================
-# CONFIGURACIÓN GENERAL
-# =========================
-st.set_page_config(page_title="Mantenimiento Roble", layout="wide")
-UTC_OFFSET = 6
-
-st_autorefresh(interval=1000, key="daterefresh")
-
-if not os.path.exists("fotos"):
-    os.makedirs("fotos")
-
-# =========================
-# SMTP
-# =========================
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SENDER_EMAIL = "ugaldeviquezalonso@gmail.com"
-SENDER_PASSWORD = "TU_APP_PASSWORD_AQUI"
-
-# =========================
-# FUNCIONES
-# =========================
-def obtener_fecha_cr():
-    return datetime.utcnow() - timedelta(hours=UTC_OFFSET)
-
-def mostrar_reloj():
-    st.markdown(
-        f"<div style='text-align:right;color:red;font-family:monospace;'>"
-        f"SISTEMA CR: {obtener_fecha_cr().strftime('%d/%m/%Y %H:%M:%S')}"
-        f"</div>",
-        unsafe_allow_html=True
-    )
-
-def enviar_correo(destinatarios, asunto, cuerpo):
-    try:
-        destinos = [d for d in destinatarios if d and "@" in d]
-
-        msg = MIMEMultipart()
-        msg["From"] = SENDER_EMAIL
-        msg["To"] = ", ".join(destinos)
-        msg["Subject"] = asunto
-        msg.attach(MIMEText(cuerpo, "plain"))
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, destinos, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(e)
-        return False
-
-def cargar(archivo, cols):
-    if os.path.exists(archivo):
-        return pd.read_csv(archivo, dtype=str).fillna("")
-    return pd.DataFrame(columns=cols)
-
-def guardar(df, archivo):
-    df.to_csv(archivo, index=False)
-
-# =========================
-# DATOS
-# =========================
-cols_ot = [
-    "OT","Empleado","Descripcion","Inicio","Tipo",
-    "FrecuenciaPM","OrdenMateriales","Estado","Fin",
-    "Comentarios","CorreoCopia","Foto"
-]
-
-df_emp = cargar("empleados.csv", ["Nombre", "Correo"])
-df_ot = cargar("ordenes.csv", cols_ot)
-
-# =========================
-# MENU
-# =========================
-st.sidebar.title("Panel")
-menu = st.sidebar.selectbox("Sección", ["Empleados", "Nueva OT", "OTs", "Dashboard"])
-
-# =========================
-# EMPLEADOS
-# =========================
-if menu == "Empleados":
-    st.title("Empleados")
-    mostrar_reloj()
-
-    with st.form("emp"):
-        n = st.text_input("Nombre")
-        c = st.text_input("Correo")
-        if st.form_submit_button("Guardar"):
-            df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre": n, "Correo": c}])], ignore_index=True)
-            guardar(df_emp, "empleados.csv")
-            st.rerun()
-
-    st.dataframe(df_emp)
-
-# =========================
-# NUEVA OT
-# =========================
 elif menu == "Nueva OT":
     st.title("Nueva Orden de Trabajo")
     mostrar_reloj()
@@ -115,6 +5,7 @@ elif menu == "Nueva OT":
     if df_emp.empty:
         st.warning("Debe registrar empleados primero")
     else:
+
         with st.form("ot_form"):
 
             op = st.selectbox("Operario", df_emp["Nombre"])
@@ -126,9 +17,10 @@ elif menu == "Nueva OT":
             )
 
             # =========================
-            # FRECUENCIA SOLO PREVENTIVO
+            # FRECUENCIA (SOLO PREVENTIVO)
             # =========================
-            frecuencia_pm = ""
+            frecuencia_pm = None
+
             if tp == "Preventivo":
                 frecuencia_pm = st.selectbox(
                     "Frecuencia Preventiva",
@@ -136,7 +28,7 @@ elif menu == "Nueva OT":
                 )
 
             # =========================
-            # MATERIALES CON INPUT SOLO SI APLICA
+            # MATERIALES (CONTROL REAL)
             # =========================
             material_opcion = st.radio(
                 "Materiales",
@@ -144,10 +36,14 @@ elif menu == "Nueva OT":
                 horizontal=True
             )
 
+            # 👇 IMPORTANTE: placeholder para forzar visibilidad correcta
             orden_materiales = "No aplica"
 
             if material_opcion == "Ligar a Orden de Materiales":
-                orden_materiales = st.text_input("Digite Orden de Materiales")
+                orden_materiales = st.text_input(
+                    "Digite Orden de Materiales",
+                    placeholder="Ej: OM-000123"
+                )
 
             # =========================
             # OTROS CAMPOS
@@ -156,38 +52,52 @@ elif menu == "Nueva OT":
             foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
             cp = st.text_input("Correo copia")
 
-            if st.form_submit_button("Generar OT"):
+            generar = st.form_submit_button("Generar OT")
 
-                id_ot = f"{len(df_ot)+1:04d}"
-                correo_op = df_emp[df_emp["Nombre"] == op]["Correo"].values[0]
+        # =====================================================
+        # PROCESAMIENTO FUERA DEL FORM (CLAVE STREAMLIT)
+        # =====================================================
+        if generar:
 
-                nombre_foto = "Sin foto"
-                if foto:
-                    nombre_foto = f"OT_{id_ot}.jpg"
-                    with open(os.path.join("fotos", nombre_foto), "wb") as f:
-                        f.write(foto.getbuffer())
+            # VALIDACIÓN SIMPLE (EVITA ERRORES)
+            if tp == "Preventivo" and not frecuencia_pm:
+                st.error("Debe seleccionar frecuencia preventiva")
+                st.stop()
 
-                nueva = {
-                    "OT": id_ot,
-                    "Empleado": op,
-                    "Descripcion": desc,
-                    "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Tipo": tp,
-                    "FrecuenciaPM": frecuencia_pm,
-                    "OrdenMateriales": orden_materiales,
-                    "Estado": "Abierta",
-                    "Fin": "",
-                    "Comentarios": "",
-                    "CorreoCopia": cp,
-                    "Foto": nombre_foto
-                }
+            if material_opcion == "Ligar a Orden de Materiales" and orden_materiales.strip() == "":
+                st.error("Debe digitar la orden de materiales")
+                st.stop()
 
-                df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
-                guardar(df_ot, "ordenes.csv")
+            id_ot = f"{len(df_ot)+1:04d}"
+            correo_op = df_emp[df_emp["Nombre"] == op]["Correo"].values[0]
 
-                correos = ["sa.alterna@gmail.com", correo_op, cp]
+            nombre_foto = "Sin foto"
+            if foto:
+                nombre_foto = f"OT_{id_ot}.jpg"
+                with open(os.path.join("fotos", nombre_foto), "wb") as f:
+                    f.write(foto.getbuffer())
 
-                cuerpo = f"""
+            nueva = {
+                "OT": id_ot,
+                "Empleado": op,
+                "Descripcion": desc,
+                "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
+                "Tipo": tp,
+                "FrecuenciaPM": frecuencia_pm if frecuencia_pm else "",
+                "OrdenMateriales": orden_materiales,
+                "Estado": "Abierta",
+                "Fin": "",
+                "Comentarios": "",
+                "CorreoCopia": cp,
+                "Foto": nombre_foto
+            }
+
+            df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
+            guardar(df_ot, "ordenes.csv")
+
+            correos = ["sa.alterna@gmail.com", correo_op, cp]
+
+            cuerpo = f"""
 OT #{id_ot}
 Operario: {op}
 Tipo: {tp}
@@ -196,26 +106,7 @@ Materiales: {orden_materiales}
 Descripción: {desc}
 """
 
-                enviar_correo(correos, f"OT #{id_ot}", cuerpo)
+            enviar_correo(correos, f"OT #{id_ot}", cuerpo)
 
-                st.success("OT creada correctamente")
-                st.rerun()
-
-# =========================
-# OT LISTADO
-# =========================
-elif menu == "OTs":
-    st.title("Órdenes")
-    mostrar_reloj()
-    st.dataframe(df_ot)
-
-# =========================
-# DASHBOARD
-# =========================
-elif menu == "Dashboard":
-    st.title("Dashboard")
-    mostrar_reloj()
-
-    if not df_ot.empty:
-        st.metric("Total OT", len(df_ot))
-        st.plotly_chart(px.pie(df_ot, names="Estado", title="Estados"))
+            st.success("OT creada correctamente")
+            st.rerun()
