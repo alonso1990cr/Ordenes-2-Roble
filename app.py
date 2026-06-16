@@ -180,8 +180,8 @@ ds = st.text_area("Descripción")
 foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
 cp = st.text_input("Correo adicional para copia")
             
-            if st.form_submit_button("Generar Orden"):
-                id_ot = f"{len(df_ot) + 1:04d}"
+ if st.form_submit_button("Generar Orden"):
+     id_ot = f"{len(df_ot) + 1:04d}"
                 # Obtener correo del operario seleccionado
                 correo_op = df_emp[df_emp['Nombre'] == op]['Correo'].values[0]
                 
