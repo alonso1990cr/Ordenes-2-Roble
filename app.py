@@ -89,7 +89,7 @@ def generar_excel_protegido(df):
     return output.getvalue()
 
 # --- CARGA DE DATOS ---
-cols_ot = ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "Estado", "Fin", "Comentarios", "CorreoCopia", "TiempoAcumulado", "Foto"]
+cols_ot = ["OT", "Empleado", "Descripcion", "Inicio", "Tipo", "FrecuenciaPM","OrdenMateriales","Estado","Fin","Comentarios","CorreoCopia","TiempoAcumulado","Foto"]
 df_emp = cargar_datos("empleados.csv", ["Nombre", "Correo"])
 df_ot = cargar_datos("ordenes.csv", cols_ot)
 
@@ -142,10 +142,43 @@ elif menu == "📝 Nueva OT":
     else:
         with st.form("f_ot", clear_on_submit=True):
             op = st.selectbox("Operario Asignado", df_emp['Nombre'])
-            tp = st.radio("Tipo", ["Preventivo", "Correctivo", "SNC alta", "SNC media","SNC baja"], horizontal=True)
-            ds = st.text_area("Descripción")
-            foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
-            cp = st.text_input("Correo adicional para copia")
+            tp = st.radio(
+    "Tipo",
+    ["Preventivo", "Correctivo", "SNC alta", "SNC media", "SNC baja"],
+    horizontal=True
+)
+
+frecuencia_pm = ""
+
+if tp == "Preventivo":
+    frecuencia_pm = st.selectbox(
+        "Frecuencia Preventiva",
+        [
+            "S - Semanal",
+            "Q - Quincenal",
+            "M - Mensual",
+            "T - Trimestral",
+            "S6 - Semestral",
+            "A - Anual"
+        ]
+    )
+
+material = st.radio(
+    "Materiales",
+    ["No aplica material", "Ligar a Orden de Materiales"],
+    horizontal=True
+)
+
+orden_materiales = "No aplica"
+
+if material == "Ligar a Orden de Materiales":
+    orden_materiales = st.text_input(
+        "Número de Orden de Materiales"
+    )
+
+ds = st.text_area("Descripción")
+foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
+cp = st.text_input("Correo adicional para copia")
             
             if st.form_submit_button("Generar Orden"):
                 id_ot = f"{len(df_ot) + 1:04d}"
@@ -156,15 +189,35 @@ elif menu == "📝 Nueva OT":
                 if foto:
                     with open(os.path.join("fotos", nom_foto), "wb") as f: f.write(foto.getbuffer())
                 
-                nueva = {"OT":id_ot, "Empleado":op, "Descripcion":ds, "Inicio":obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
-                         "Tipo":tp, "Estado":"Abierta", "Fin":"", "Comentarios":"", "CorreoCopia":cp, "TiempoAcumulado":"0", "Foto":nom_foto}
+                nueva = {
+    "OT": id_ot,
+    "Empleado": op,
+    "Descripcion": ds,
+    "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
+    "Tipo": tp,
+    "FrecuenciaPM": frecuencia_pm,
+    "OrdenMateriales": orden_materiales,
+    "Estado": "Abierta",
+    "Fin": "",
+    "Comentarios": "",
+    "CorreoCopia": cp,
+    "TiempoAcumulado": "0",
+    "Foto": nom_foto
+}
                 
                 df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
                 guardar_datos(df_ot, "ordenes.csv")
                 
                 # ENVÍO DE CORREO AL APERTURAR
                 lista_correos = ["sa.alterna@gmail.com", correo_op, cp]
-                cuerpo = f"Se ha generado la OT #{id_ot}\nOperario: {op}\nTipo: {tp}\nDescripción: {ds}"
+                cuerpo = (
+    f"Se ha generado la OT #{id_ot}\n"
+    f"Operario: {op}\n"
+    f"Tipo: {tp}\n"
+    f"Frecuencia PM: {frecuencia_pm}\n"
+    f"Orden de Materiales: {orden_materiales}\n"
+    f"Descripción: {ds}"
+)
                 enviar_notificacion(lista_correos, f"Apertura OT #{id_ot}", cuerpo)
                 
                 st.success(f"OT #{id_ot} generada y correos enviados."); st.rerun()
