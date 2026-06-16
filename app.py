@@ -1,231 +1,184 @@
 import streamlit as st
+import sqlite3
+from datetime import datetime
 import pandas as pd
-from datetime import datetime, timedelta
-import os
 import plotly.express as px
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import io
-from streamlit_autorefresh import st_autorefresh
 
-# ======================
+# =========================
 # CONFIG
-# ======================
-st.set_page_config(page_title="Mantenimiento Roble", layout="wide")
-UTC_OFFSET = 6
+# =========================
+st.set_page_config(page_title="Mantenimiento Pro", layout="wide")
+DB = "mantenimiento.db"
 
-st_autorefresh(interval=1000, key="refresh")
+# =========================
+# DB
+# =========================
+def conn():
+    return sqlite3.connect(DB, check_same_thread=False)
 
-if not os.path.exists("fotos"):
-    os.makedirs("fotos")
+def init():
+    c = conn().cursor()
 
-# ======================
-# SMTP
-# ======================
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SENDER_EMAIL = "ugaldeviquezalonso@gmail.com"
-SENDER_PASSWORD = "TU_APP_PASSWORD"
-
-# ======================
-# FUNCIONES
-# ======================
-def obtener_fecha_cr():
-    return datetime.utcnow() - timedelta(hours=UTC_OFFSET)
-
-def guardar(df, archivo):
-    df.to_csv(archivo, index=False)
-
-def cargar(archivo, cols):
-    if os.path.exists(archivo):
-        return pd.read_csv(archivo, dtype=str).fillna("")
-    return pd.DataFrame(columns=cols)
-
-def enviar_correo(destinatarios, asunto, cuerpo):
-    try:
-        destinos = [d for d in destinatarios if d and "@" in d]
-
-        msg = MIMEMultipart()
-        msg["From"] = SENDER_EMAIL
-        msg["To"] = ", ".join(destinos)
-        msg["Subject"] = asunto
-        msg.attach(MIMEText(cuerpo, "plain"))
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, destinos, msg.as_string())
-        server.quit()
-    except Exception as e:
-        st.error(e)
-
-def reloj():
-    st.markdown(
-        f"<div style='text-align:right;color:red;'>CR: {obtener_fecha_cr()}</div>",
-        unsafe_allow_html=True
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS empleados (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT,
+        correo TEXT
     )
+    """)
 
-# ======================
-# DATA
-# ======================
-cols_ot = [
-    "OT","Empleado","Descripcion","Inicio","Tipo",
-    "FrecuenciaPM","OrdenMateriales","Estado","Fin",
-    "Comentarios","CorreoCopia","Foto"
-]
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS ordenes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empleado TEXT,
+        tipo TEXT,
+        frecuencia TEXT,
+        materiales TEXT,
+        descripcion TEXT,
+        estado TEXT,
+        fecha TEXT,
+        comentarios TEXT
+    )
+    """)
 
-df_emp = cargar("empleados.csv", ["Nombre", "Correo"])
-df_ot = cargar("ordenes.csv", cols_ot)
+    conn().commit()
+    conn().close()
 
-# ======================
-# MENU
-# ======================
-st.sidebar.title("Panel")
-menu = st.sidebar.selectbox("Sección", ["Empleados", "Nueva OT", "OTs", "Dashboard"])
+init()
 
-# =========================================================
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def q(sql, params=()):
+    c = conn()
+    cur = c.cursor()
+    cur.execute(sql, params)
+    c.commit()
+    c.close()
+
+def df(sql):
+    return pd.read_sql_query(sql, conn())
+
+# =========================
+# MENU ORIGINAL (CLARO)
+# =========================
+menu = st.sidebar.radio(
+    "Menú",
+    ["Empleados", "Nueva OT", "Listado OT", "Dashboard"]
+)
+
+# =========================
 # EMPLEADOS
-# =========================================================
+# =========================
 if menu == "Empleados":
     st.title("Empleados")
-    reloj()
 
     with st.form("emp"):
         n = st.text_input("Nombre")
         c = st.text_input("Correo")
 
         if st.form_submit_button("Guardar"):
-            df_emp = pd.concat([df_emp, pd.DataFrame([{"Nombre": n, "Correo": c}])], ignore_index=True)
-            guardar(df_emp, "empleados.csv")
+            q("INSERT INTO empleados (nombre, correo) VALUES (?,?)", (n, c))
+            st.success("Guardado")
             st.rerun()
 
-    st.dataframe(df_emp)
+    st.dataframe(df("SELECT * FROM empleados"))
 
-# =========================================================
-# NUEVA OT (CORREGIDO)
-# =========================================================
+# =========================
+# NUEVA OT (CON TUS REGLAS)
+# =========================
 elif menu == "Nueva OT":
     st.title("Nueva OT")
-    reloj()
 
-    if df_emp.empty:
-        st.warning("Registre empleados primero")
+    empleados = df("SELECT nombre FROM empleados")
+
+    if empleados.empty:
+        st.warning("No hay empleados")
     else:
 
-        with st.form("ot_form"):
+        with st.form("ot"):
 
-            op = st.selectbox("Operario", df_emp["Nombre"])
+            emp = st.selectbox("Operario", empleados["nombre"])
 
-            tp = st.radio(
+            tipo = st.radio(
                 "Tipo",
-                ["Preventivo", "Correctivo", "SNC alta", "SNC media", "SNC baja"],
-                horizontal=True
+                ["Preventivo", "Correctivo", "SNC Alta", "SNC Media", "SNC Baja"]
             )
 
-            # ======================
-            # FRECUENCIA SOLO PREVENTIVO
-            # ======================
-            frecuencia_pm = ""
-
-            if tp == "Preventivo":
-                frecuencia_pm = st.selectbox(
-                    "Frecuencia Preventiva",
-                    ["S - Semanal", "Q - Quincenal", "M - Mensual", "T - Trimestral", "S6 - Semestral", "A - Anual"]
+            # ✔ FRECUENCIA SOLO PREVENTIVO
+            frecuencia = ""
+            if tipo == "Preventivo":
+                frecuencia = st.selectbox(
+                    "Frecuencia",
+                    ["Semanal", "Quincenal", "Mensual", "Trimestral", "Semestral", "Anual"]
                 )
 
-            # ======================
-            # MATERIAL (CHECKBOX)
-            # ======================
-            usar_materiales = st.checkbox("Ligar a Orden de Materiales")
+            # ✔ MATERIAL SOLO SI ACTIVO
+            usar_mat = st.checkbox("Ligar a orden de materiales")
 
-            orden_materiales = ""
+            materiales = ""
+            if usar_mat:
+                materiales = st.text_input("Código orden de materiales")
 
-            if usar_materiales:
-                orden_materiales = st.text_input("Digite Orden de Materiales")
+            descripcion = st.text_area("Descripción")
 
-            # ======================
-            # OTROS CAMPOS
-            # ======================
-            desc = st.text_area("Descripción")
-            foto = st.file_uploader("Foto", type=["jpg","png","jpeg"])
-            cp = st.text_input("Correo copia")
+            if st.form_submit_button("Crear OT"):
 
-            generar = st.form_submit_button("Generar OT")
+                q("""
+                INSERT INTO ordenes (
+                    empleado, tipo, frecuencia, materiales,
+                    descripcion, estado, fecha, comentarios
+                )
+                VALUES (?,?,?,?,?,?,?,?)
+                """, (
+                    emp, tipo, frecuencia, materiales,
+                    descripcion, "Abierta", now(), ""
+                ))
 
-        # ======================
-        # PROCESO
-        # ======================
-        if generar:
+                st.success("OT creada")
+                st.rerun()
 
-            # OT CONSECUTIVA ROBUSTA
-            if df_ot.empty:
-                id_ot = 1
-            else:
-                try:
-                    id_ot = int(df_ot["OT"].astype(int).max()) + 1
-                except:
-                    id_ot = len(df_ot) + 1
+# =========================
+# LISTADO + EDITAR + ELIMINAR
+# =========================
+elif menu == "Listado OT":
+    st.title("Órdenes de Trabajo")
 
-            id_ot = f"{id_ot:04d}"
+    data = df("SELECT * FROM ordenes ORDER BY id DESC")
+    st.dataframe(data, use_container_width=True)
 
-            correo_op = df_emp[df_emp["Nombre"] == op]["Correo"].values[0]
+    st.divider()
 
-            nombre_foto = "Sin foto"
-            if foto:
-                nombre_foto = f"OT_{id_ot}.jpg"
-                with open(os.path.join("fotos", nombre_foto), "wb") as f:
-                    f.write(foto.getbuffer())
+    st.subheader("Editar / Eliminar OT")
 
-            nueva = {
-                "OT": id_ot,
-                "Empleado": op,
-                "Descripcion": desc,
-                "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
-                "Tipo": tp,
-                "FrecuenciaPM": frecuencia_pm,
-                "OrdenMateriales": orden_materiales,
-                "Estado": "Abierta",
-                "Fin": "",
-                "Comentarios": "",
-                "CorreoCopia": cp,
-                "Foto": nombre_foto
-            }
+    ot = st.number_input("ID OT", min_value=1, step=1)
 
-            df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
-            guardar(df_ot, "ordenes.csv")
+    estado = st.selectbox("Estado", ["Abierta", "En proceso", "Cerrada"])
+    comentario = st.text_area("Comentario")
 
-            correos = ["sa.alterna@gmail.com", correo_op, cp]
+    col1, col2 = st.columns(2)
 
-            cuerpo = f"""
-OT #{id_ot}
-Operario: {op}
-Tipo: {tp}
-Frecuencia: {frecuencia_pm}
-Orden Materiales: {orden_materiales}
-Descripción: {desc}
-"""
+    if col1.button("Actualizar"):
+        q("UPDATE ordenes SET estado=?, comentarios=? WHERE id=?",
+          (estado, comentario, ot))
+        st.success("Actualizado")
+        st.rerun()
 
-            enviar_correo(correos, f"OT #{id_ot}", cuerpo)
+    if col2.button("Eliminar"):
+        q("DELETE FROM ordenes WHERE id=?", (ot,))
+        st.warning("Eliminado")
+        st.rerun()
 
-            st.success("OT creada correctamente")
-            st.rerun()
-
-# =========================================================
-# OT LISTADO
-# =========================================================
-elif menu == "OTs":
-    st.title("Órdenes")
-    reloj()
-    st.dataframe(df_ot)
-
-# =========================================================
+# =========================
 # DASHBOARD
-# =========================================================
+# =========================
 elif menu == "Dashboard":
     st.title("Dashboard")
-    reloj()
 
-    if not df_ot.empty:
-        st.metric("Total OT", len(df_ot))
-        st.plotly_chart(px.pie(df_ot, names="Estado", title="Estados"))
+    data = df("SELECT * FROM ordenes")
+
+    if not data.empty:
+        st.metric("Total OT", len(data))
+
+        st.plotly_chart(px.pie(data, names="estado", title="Estados"))
+        st.plotly_chart(px.histogram(data, x="tipo", title="Tipos de OT"))
