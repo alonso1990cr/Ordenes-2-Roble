@@ -190,20 +190,19 @@ cp = st.text_input("Correo adicional para copia")
                     with open(os.path.join("fotos", nom_foto), "wb") as f: f.write(foto.getbuffer())
                 
                 nueva = {
-    "OT": id_ot,
-    "Empleado": op,
-    "Descripcion": ds,
-    "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
-    "Tipo": tp,
-    "FrecuenciaPM": frecuencia_pm,
-    "OrdenMateriales": orden_materiales,
-    "Estado": "Abierta",
-    "Fin": "",
-    "Comentarios": "",
-    "CorreoCopia": cp,
-    "TiempoAcumulado": "0",
-    "Foto": nom_foto
-}
+                    "OT": id_ot,
+                    "Empleado": op,
+                    "Descripcion": ds,
+                    "Inicio": obtener_fecha_cr().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Tipo": tp,
+                    "FrecuenciaPM": frecuencia_pm,
+                    "OrdenMateriales": orden_materiales,
+                    "Estado": "Abierta",
+                    "Fin": "",
+                    "Comentarios": "",
+                    "CorreoCopia": cp,
+                    "TiempoAcumulado": "0",
+                    "Foto": nom_foto}
                 
                 df_ot = pd.concat([df_ot, pd.DataFrame([nueva])], ignore_index=True)
                 guardar_datos(df_ot, "ordenes.csv")
